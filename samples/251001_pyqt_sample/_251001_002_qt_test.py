@@ -1,5 +1,5 @@
 import sys, random, time
-from datetime import datetime
+from datetime import datetime, timezone
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QAction, QFont
 from PyQt6.QtWidgets import (
@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 # -----------------------------
 # Utils
 # -----------------------------
-LOG_LEVELS = ["INFO", "WARN", "ERROR", "DEBUG"]
+LOG_LEVELS = ["INFO", "DEBUG", "WARN", "ERROR"]
 LOG_TOPICS = [
     "Net", "MQTT", "Anomaly", "Camera", "Pose", "DB", "Sensor", "TTS",
     "System", "Service", "Heartbeat"
@@ -29,7 +29,10 @@ SENSORS = [
 
 
 def now_str():
-    return datetime.now().strftime("%H:%M:%S")
+    # return datetime.now().strftime("%H:%M:%S")
+    """RFC3339 local time, e.g. 2025-10-01T10:23:45+09:00"""
+    # return datetime.now().astimezone().isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # -----------------------------
