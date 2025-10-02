@@ -35,15 +35,25 @@ def build_model(num_classes=1):
 device = torch.device("cpu") 
 model = build_model(num_classes=1)
 # 🚨 best_obstacle_detection_model.pth 파일이 현재 디렉토리에 있어야 합니다.
+# best_obstacle_detection_model.pth : 이전에 훈련 중 검증 손실이 가장 낮았던 최적의 가중치 파일
 model.load_state_dict(torch.load('best_obstacle_detection_model.pth', map_location=device))
 model.eval()
 model = model.to(device)
 
 # 2. 모델을 추적하여 TorchScript로 변환 (Tracing)
 # 모델이 요구하는 입력 이미지 형식과 동일한 더미 입력 생성
+# torch.randn : PyTorch에서 특정 모양을 가진 텐서를 생성하는 함수
+# torch.randn(배치크기, 채널, 높이, 너비)
+# 배치크기 : 한 번에 처리할 이미지 개수
+# 채널 = 3 : RGB이므로 3개로  설정
 dummy_input = torch.randn(1, 3, 224, 224).to(device)
 
 # TorchScript로 변환
+# PyTorch 모델을 TorchScript라는 형식으로 변환하는 과정
+# Python 환경 밖에서도 독립적으로 실행할 수 있도록 직렬화하고 최적화하는 단계
+# 직렬화 : 딥러닝 모델의 데이터와 구조를 영구적으로 저장하고 전송하기 쉬운 형태(파일)로 변환하는 것
+# torch.jit.trace : PyTorch 모델을 TorchScript로 변환하는 함수
+# TorchScript : PyTorch 모델을 직렬화하고 최적화하여 Python 환경에 의존하지 않고도 실행할 수 있도록 하는 중간표현언어
 traced_script_module = torch.jit.trace(model, dummy_input)
 
 # 3. 배포용 파일로 저장
@@ -75,16 +85,21 @@ def predict_obstacle(image_path):
     """지정된 경로의 이미지에 대해 장애물 감지 추론을 수행합니다."""
     # 이미지 로드 및 전처리
     try:
+        # 이미지를 불러오고, RGB 형식으로 변환을 함
         img = Image.open(image_path).convert('RGB')
     except FileNotFoundError:
         print(f"오류: 파일을 찾을 수 없습니다 - {image_path}")
         return False, 0.0
         
     input_tensor = inference_transforms(img).unsqueeze(0) # [1, 3, 224, 224] 텐서로 변환
+    # inference_transforms : 1. 이미지 크기를 조정(Resize), 2. 이미지의 형태를 H x W x C(높이, 너비, 채널)에서 C x H x W 형태의 텐서로 변환하고 픽셀 값을 0과 1사이로 정규화 시켜줌. 3. 평균, 표준편차를 통해서 정규화
+    # inference_transforms = 1단계에서 했던 전처리를 해주는 과정임
+    # .unsqueeze(0) : 텐서의 가장 앞쪽 인덱스에 새로운 차원을 하나 추가, (0)을 통해서 배치 크기 1을 추가해줌
     
     # 모델 추론
     with torch.no_grad():
         output = deployed_model(input_tensor)
+        # 가공되지 않은 숫자(Logit)을 얻음
         
     # Logits -> Sigmoid -> 확률 (0~1) 변환
     prob = torch.sigmoid(output).item() 
