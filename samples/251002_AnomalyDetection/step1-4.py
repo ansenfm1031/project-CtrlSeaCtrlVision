@@ -29,6 +29,14 @@ STD = [0.229, 0.224, 0.225]
 # ----------------------------------------------------------
 train_transforms = transforms.Compose([ # 모델이 학습할 데이터를 적용, 데이터 증강 기법을 추가하여 모델의 일반화 능력을 높이고 과적합을 방지해주는 역할
     transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)), # 딥러닝 모델에 맞게 이미지 픽셀 크기를 수정해줌
+    
+    # 수직 움직임 강인성을 위해서 RandomAffine 추가
+    transforms.RandomAffine(
+        degrees = 0,
+        translate=(0.0, 0.35),
+        scale=(1.0, 1.0),
+        shear=0
+    ),
     transforms.RandomHorizontalFlip(),  # 이미지를 무작위로 좌우 반전(데이터 증강 : 모델이 좌우가 바뀐 장애물도 인식하도록 학습하여 다양성을 확보)
     transforms.RandomRotation(10),  # 이미지를 -10도~10도 무작위로 회전(장애물이 약간 기울어진 상태에서도 인식하도록 강인성을 높임)
     transforms.ToTensor(),  # 이미지를 PyTorch 텐서 형식으로 변환, 픽셀값을 0.0~0.1로 정규화
