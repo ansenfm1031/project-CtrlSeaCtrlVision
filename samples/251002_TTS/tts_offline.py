@@ -23,7 +23,7 @@ def tts(text: str, rate: int = 180, volume: float = 1.0, voice_hint: str = "ko")
 
     engine.say(text)
     engine.runAndWait()
-
+# hi!
 if __name__ == "__main__":
     sample = "안녕하세요. 오프라인 TTS 테스트입니다. 안전 항해를 위해 주의하세요."
     tts(sample)
