@@ -83,7 +83,7 @@ def text_to_speech(text, filename="summary.mp3"):
     try:
         tts = gTTS(text=text, lang="ko")
         tts.save(filename)
-        os.system(f"mpg123 -q {filename}")
+        os.system(f"mpv --no-terminal --volume=100 {filename}") 
         print("[TTS] Summary spoken successfully.")
     except Exception as e:
         print(f"[TTS Error] {e}")
