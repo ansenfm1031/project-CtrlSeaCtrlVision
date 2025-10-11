@@ -185,11 +185,6 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Log Monitor + TTS + Sensor Toggle (Simulated)")
-        # 창 장식 제거 + 항상 위 + (X11일 때) WM 우회
-        self.setWindowFlag(Qt.FramelessWindowHint, True)
-        self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-        # 아래 플래그는 X11 전용. Wayland에선 무시됨.
-        self.setWindowFlag(Qt.X11BypassWindowManagerHint, True)
         self.showFullScreen()
 
         self.central = QWidget()
