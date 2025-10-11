@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from gtts import gTTS
 import os
 from openai import OpenAI # OpenAI API 용
+import html
 import re # 정규표현식 사용을 위해 추가
 
 # === DB 연결 (MariaDB) ===
@@ -27,18 +28,19 @@ client_llm = OpenAI() # 키는 환경 변수에서 자동 로드됩니다.
 # === TTS 텍스트 전처리 함수 ===
 def clean_tts_text(text: str) -> str:
     """
-    TTS 재생을 위해 불필요한 마크다운 및 특수 공백 문자를 완전히 제거합니다.
+    TTS 재생을 위해 불필요한 마크다운 문자를 제거하되, 한글/구두점은 유지합니다.
     """
-    # 1. 특수 마크다운 문자 제거
-    # \*\* (볼드체), \*\* (기타 별표), \# (헤더), \- (목록 기호) 등
-    cleaned_text = text.replace('**', '').replace('*', '').replace('#', '').replace('-', '')
+    # 1. 명시적 마크다운 문자 제거
+    cleaned_text = text.replace('**', '')
+    cleaned_text = cleaned_text.replace('*', '')
+    cleaned_text = cleaned_text.replace('#', '')
     
-    # 2. 유니코드 공백 및 제어 문자 제거 (가장 핵심적인 수정)
-    # \s+는 일반적인 공백, 탭, 줄바꿈을 포함하지만, 다른 유니코드 공백도 정리해야 합니다.
-    # [ \t\n\r\f\v] 외의 모든 비표준 공백 문자를 일반 공백으로 치환합니다.
-    cleaned_text = re.sub(r'[\u2000-\u200A\u202F\u205F\u3000]', ' ', cleaned_text)
+    # 2. ⭐️ 강화된 정규 표현식 (한글, 영문, 숫자, 공백, 구두점만 남기기)
+    # [^\w\s\.\,\!\?] : w(영문/숫자/\_), s(공백), 그리고 자주 쓰는 구두점만 남기고 모두 제거
+    # \w 대신 한글 유니코드 범위를 추가하여 정확도를 높입니다.
+    cleaned_text = re.sub(r'[^\w\s\.\,\!\?ㄱ-ㅎㅏ-ㅣ가-힣]', ' ', cleaned_text)
     
-    # 3. 모든 연속된 공백(일반 공백, 탭, 줄바꿈)을 하나의 공백으로 치환
+    # 3. 연속된 공백을 하나의 공백으로 치환
     cleaned_text = re.sub(r'\s+', ' ', cleaned_text)
     
     # 4. 양 끝의 공백 제거
@@ -50,7 +52,8 @@ def clean_tts_text(text: str) -> str:
 def query_llm(prompt: str) -> str:
     try:
         messages = [
-            {"role": "system", "content": "너는 선박 항해 보조관이야. 사용자에게 요청받은 로그를 바탕으로 항해일지, 선박 상태, 위험 감지 상황 등을 **간결하고 구조적으로 한국어로 브리핑**해야 해."},
+            # 수정: 마크다운 기호 금지와 함께 구두점 사용을 최소화하도록 요청
+            {"role": "system", "content": "너는 선박 항해 보조관이야. 로그를 분석하여 간결하고 명확하게 한국어로 브리핑해줘. 답변 시 **마크다운 기호(\\#, \\*, \\- 등)를 절대 사용하지 말고**, 문장 끝에 마침표를 제외한 **쉼표나 기타 구두점의 사용을 최소화**하며 평문으로만 응답해야 해."},
             {"role": "user", "content": prompt}
         ]
         response = client_llm.chat.completions.create(
@@ -94,7 +97,13 @@ def summarize_logs(logs):
     다음은 선박 항해 로그입니다:
     {text}
 
-    위 로그를 간결하고 구조적으로 요약해줘. (한국어로)
+    위 로그를 분석하여 **다음 4가지 정보를 반드시 포함**하여 간결하게 요약 및 브리핑해줘:
+    1. 선박의 일반적인 상태 (엔진, 속도 등)
+    2. 최근 10분간 발생한 주요 이벤트 또는 특이사항
+    3. 카메라나 레이더를 통한 위험 감지 상황 (안개, 타 선박, 사람 등)
+    4. 조치된 사항이나 필요한 추가 조치
+
+    응답은 항목별 요약 없이 **하나의 문단 형태**로 한국어로 작성하고, **마크다운 기호(\\#, \\*, \\- 등)는 절대 사용하지 마세요.**
     """
     print("[LLM] Summarizing logs using GPT-4o mini...")
     summary = query_llm(prompt)
