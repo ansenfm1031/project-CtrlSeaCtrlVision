@@ -185,7 +185,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Log Monitor + TTS + Sensor Toggle (Simulated)")
-        self.showMaximized()
+        # self.showMaximized()
+        self.showFullScreen()
 
         self.central = QWidget()
         self.stack = QStackedLayout(self.central)
