@@ -23,6 +23,18 @@ TOPIC = "project/#"
 # === OpenAI 클라이언트 설정 ===
 client_llm = OpenAI() # 키는 환경 변수에서 자동 로드됩니다.
 
+# === TTS 텍스트 전처리 함수 ===
+def clean_tts_text(text: str) -> str:
+    """TTS 재생을 위해 불필요한 마크다운 문자를 제거합니다."""
+    # ** (볼드체), # (헤더), - (하이픈) 등 제거
+    cleaned_text = text.replace('**', '').replace('#', '').replace('*', '').replace('-', '')
+    # 기타 불필요한 마크다운 기호가 있다면 여기에 추가
+    
+    # 여러 개의 줄바꿈을 하나의 공백으로 치환하여 자연스러운 흐름 유지 (선택적)
+    cleaned_text = ' '.join(cleaned_text.split())
+    
+    return cleaned_text
+
 # === LLM 질의응답 함수 ===
 def query_llm(prompt: str) -> str:
     try:
@@ -83,7 +95,7 @@ def text_to_speech(text, filename="summary.mp3"):
     try:
         tts = gTTS(text=text, lang="ko")
         tts.save(filename)
-        os.system(f"mpv --no-terminal --volume=100 {filename}") 
+        os.system(f"mpv --no-terminal --volume=100 --speed=1.5 {filename}") 
         print("[TTS] Summary spoken successfully.")
     except Exception as e:
         print(f"[TTS Error] {e}")
