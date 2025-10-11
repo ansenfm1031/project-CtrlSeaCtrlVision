@@ -1,7 +1,7 @@
 import sys, random, time
 from datetime import datetime, timezone
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt6.QtGui import QAction, QFont
+from PyQt6.QtGui import QAction, QFont, QCursor
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QPlainTextEdit, QLabel, QStackedLayout, QTableWidget,
@@ -185,6 +185,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Log Monitor + TTS + Sensor Toggle (Simulated)")
+        self.setCursor(QCursor(Qt.CursorShape.BlankCursor))
         self.showFullScreen()
 
         self.central = QWidget()
