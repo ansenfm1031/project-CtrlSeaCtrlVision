@@ -3,7 +3,7 @@ import pymysql
 from datetime import datetime, timezone
 from gtts import gTTS
 import os
-import requests # Hugging Face API 용
+from openai import OpenAI # OpenAI API 용
 
 # === DB 연결 (MariaDB) ===
 db = pymysql.connect(
@@ -20,31 +20,29 @@ BROKER = "0.0.0.0"
 PORT = 1883
 TOPIC = "project/#"
 
-# === Hugging Face LLM 설정 ===
-HF_TOKEN = "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"
-HF_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
-headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+# === OpenAI 클라이언트 설정 ===
+client_llm = OpenAI() # 키는 환경 변수에서 자동 로드됩니다.
 
 # === LLM 질의응답 함수 ===
-def query_llm(prompt):
-    payload = {"inputs": prompt}
+def query_llm(prompt: str) -> str:
     try:
-        res = requests.post(HF_API_URL, headers=headers, json=payload, timeout=30)
-        if res.status_code == 200:
-            data = res.json()
-            if isinstance(data, list) and "generated_text" in data[0]:
-                return data[0]["generated_text"]
-            else:
-                return str(data)
-        elif res.status_code == 403:
-            print("[LLM Error] Access forbidden (403) — check token or model permissions.")
-            return "⚠️ LLM 접근이 제한되었습니다."
-        else:
-            print(f"[LLM Error] HTTP {res.status_code}: {res.text[:200]}")
-            return f"⚠️ LLM 오류 ({res.status_code})"
+        messages = [
+            {"role": "system", "content": "너는 선박 항해 보조관이야. 사용자에게 요청받은 로그를 바탕으로 항해일지, 선박 상태, 위험 감지 상황 등을 **간결하고 구조적으로 한국어로 브리핑**해야 해."},
+            {"role": "user", "content": prompt}
+        ]
+        response = client_llm.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            max_tokens=300,
+            temperature=0.7,
+        )
+        result = response.choices[0].message.content
+        print("[LLM OK] Response received.")
+        return result
     except Exception as e:
-        print(f"[LLM Error] {e}")
+        print(f"[LLM ERROR] {e}")
         return "⚠️ LLM 요청 중 오류 발생."
+
 
 # === 로그 불러오기 ===
 def fetch_logs(minutes=10):
@@ -75,7 +73,7 @@ def summarize_logs(logs):
 
     위 로그를 간결하고 구조적으로 요약해줘. (한국어로)
     """
-    print("[LLM] Summarizing logs using Google Gemma-2B-it...")
+    print("[LLM] Summarizing logs using GPT-4o mini...")
     summary = query_llm(prompt)
     print("[SUMMARY]\n", summary)
     return summary
