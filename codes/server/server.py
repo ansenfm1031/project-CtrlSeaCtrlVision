@@ -229,15 +229,52 @@ def process_and_save_data(msg):
     # 1. 토픽 파싱
     topic = msg.topic
     payload = msg.payload.decode('utf-8')
+    # parse_payload_to_dict 함수는 JSON 파싱을 수행한다고 가정
     payload_dict = parse_payload_to_dict(payload)
     
     # 토픽에서 모듈/액션 추출 (예: project/IMU/RAW -> module=IMU, action=RAW)
-    parts = topic.split('/')
-    module_action_str = parts[-2] + '/' + parts[-1] # 예: IMU/RAW
+    parts = topic.split('/') # ['project', 'vision', 'RAW'] 또는 ['project', 'IMU', 'RAW']
     
-    parts_ma = module_action_str.split('/')
-    module = parts_ma[0].upper() if parts_ma else "UNKNOWN"
-    action = parts_ma[1].upper() if len(parts_ma) > 1 else "RAW" # RAW를 기본 액션으로 가정
+    # 토픽이 최소한 3단계 (project/module/action) 이상이어야 함
+    if len(parts) < 3:
+        print(f"[WARN] Skipping short topic: {topic}")
+        return
+
+    topic_base = parts[0] + '/' + parts[1] # 'project/vision' 또는 'project/IMU'
+    module = parts[1].upper() # 'VISION' 또는 'IMU'
+    action = parts[2].upper() # 'RAW' 또는 'ALERT' 등
+    
+    # 디버깅 및 서버 요구사항 맞추기
+    
+    # Vision 토픽일 경우 (기존 로직)
+    if module == "VISION":
+        # 🟢 VISION 모듈: save_vision_data 함수에 필수 인수 3개를 전달합니다.
+        try:
+            # 파싱된 topic_base ('project/vision'), action ('RAW'), payload_dict를 전달합니다.
+            save_vision_data(topic_base, action, payload_dict) 
+            
+        except TypeError as e:
+            # save_vision_data 호출 시 TypeError가 발생하면, 인수가 여전히 틀렸다는 뜻입니다.
+            print(f"[CRITICAL ERROR] save_vision_data 호출 실패: {e}. server.py의 함수 정의를 확인하세요.")
+            
+    # IMU 토픽일 경우 (추가된 로직)
+    elif module == "IMU":
+        # 🟢 IMU 모듈: save_imu_data 함수에 필수 인수 3개를 전달합니다.
+        # save_imu_data(topic_base, action, payload_dict) 시그니처를 가정합니다.
+        try:
+            # 파싱된 topic_base ('project/IMU'), action ('RAW'), payload_dict를 전달합니다.
+            # 'save_imu_data' 함수가 server.py에 정의되어 있다고 가정합니다.
+            save_imu_data(topic_base, action, payload_dict)
+            
+        except TypeError as e:
+            # save_imu_data 호출 시 TypeError가 발생하면, 인수가 여전히 틀렸다는 뜻입니다.
+            print(f"[CRITICAL ERROR] save_imu_data 호출 실패: {e}. server.py의 함수 정의를 확인하세요.")
+            
+    # 기타 모듈이 추가될 경우 elif를 사용하여 확장 가능
+            
+    # ... (다른 모듈 처리 로직이 있었다면 이 아래에 위치)
+    
+    return
 
     # =======================================================
     # 2. 데이터 라우팅 및 저장 (수정 및 확장 필요)
