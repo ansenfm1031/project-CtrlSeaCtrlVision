@@ -1,0 +1,6 @@
+paho-mqtt
+SQLAlchemy
+pymysql
+python-dotenv
+openai
+gtts
