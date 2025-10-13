@@ -25,8 +25,9 @@ client_llm = OpenAI() # 키는 환경 변수에서 자동 로드됩니다.
 
 # === 유틸리티 ===
 def now_str():
-    """UTC 시각을 'YYYY-MM-DD HH:MM:SS' 형식으로 반환합니다."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    """UTC 시각을 'YYYY-MM-DD HH:MM:SS.ffffff' (마이크로초) 형식으로 반환합니다."""
+    # 초 단위가 아닌 마이크로초 단위까지 포함하여 고유성을 높입니다. (Duplicate Entry 방지)
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 # === DB 연결 함수 (연결이 끊어졌을 경우를 대비) ===
 def get_db_connection():
@@ -117,7 +118,7 @@ def save_imu_raw_data(payload_dict: dict):
         now = now_str()
         
         # 클라이언트가 보낸 roll, pitch, yaw 키를 사용합니다.
-        roll = float(payload_dict.get('roll', 0.0))
+        roll = float(payload_dict.get('roll', 0.0) or payload_dict.get('roll_angle', 0.0)) 
         pitch = float(payload_dict.get('pitch', 0.0))
         yaw = float(payload_dict.get('yaw', 0.0))
         
