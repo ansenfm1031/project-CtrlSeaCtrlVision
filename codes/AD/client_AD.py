@@ -29,11 +29,11 @@ def now_str():
 # 2. 모델 경로 설정 및 유효성 검사
 # =======================
 # 이 경로는 실제 라즈베리 파이 환경에 맞게 수정되어야 합니다.
-det_xml = "/home/ubuntu26/workspace/AD_Dataset/Detection_Model/Detection.xml"
-det_bin = "/home/ubuntu26/workspace/AD_Dataset/Detection_Model/Detection.bin"
+det_xml = "Detection.xml"
+det_bin = "Detection.bin"
 
-cls_xml = "/home/ubuntu26/workspace/AD_Dataset/Detection_Model/Classification.xml"
-cls_bin = "/home/ubuntu26/workspace/AD_Dataset/Detection_Model/Classification.bin"
+cls_xml = "Classification.xml"
+cls_bin = "Classification.bin"
 
 DEPLOYMENT_FILE = "deployed_obstacle_detector.pt"  # PyTorch Anomaly Detection TorchScript 모델
 
