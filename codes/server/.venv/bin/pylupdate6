@@ -1,7 +1,0 @@
-#!/home/cscv/intel-edge-ai-sw-8/2509_3rd_proj_dooreu/codes/server/.venv/bin/python3
-import sys
-from PyQt6.lupdate.pylupdate import main
-if __name__ == '__main__':
-    if sys.argv[0].endswith('.exe'):
-        sys.argv[0] = sys.argv[0][:-4]
-    sys.exit(main())
