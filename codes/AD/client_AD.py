@@ -29,13 +29,13 @@ def now_str():
 # 2. 모델 경로 설정 및 유효성 검사
 # (모든 모델 파일은 이 스크립트와 같은 디렉토리에 있어야 합니다.)
 # =======================
-det_xml = "Detection.xml"
-det_bin = "Detection.bin"
+det_xml = "models/Detection.xml"
+det_bin = "models/Detection.bin"
 
-cls_xml = "Classification.xml"
-cls_bin = "Classification.bin"
+cls_xml = "models/Classification.xml"
+cls_bin = "models/Classification.bin"
 
-DEPLOYMENT_FILE = "deployed_obstacle_detector.pt"  # PyTorch Anomaly Detection TorchScript 모델
+DEPLOYMENT_FILE = "models/deployed_obstacle_detector.pt"  # PyTorch Anomaly Detection TorchScript 모델
 
 ALL_MODEL_PATHS = [det_xml, det_bin, cls_xml, cls_bin, DEPLOYMENT_FILE]
 for path in ALL_MODEL_PATHS:
