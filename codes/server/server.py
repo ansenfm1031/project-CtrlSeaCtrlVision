@@ -45,15 +45,20 @@ def get_db_connection():
 # === 키=값; 형태의 문자열을 딕셔너리로 파싱 (함수 내용 그대로 사용) ===
 def parse_payload_to_dict(payload: str) -> dict:
     """'키=값;키=값' 형태의 문자열을 딕셔너리로 파싱합니다."""
-    data = {}
-    if "|" in payload:
-        payload = payload.split("|", 1)[-1].strip()
-    pairs = payload.split(';')
-    for pair in pairs:
-        if '=' in pair:
-            k, v = pair.split('=', 1)
-            data[k.strip()] = v.strip()
-    return data
+    # 클라이언트가 JSON을 보낸다면 JSON 파싱을 시도합니다.
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError:
+        # JSON이 아니면 기존 키=값; 로직을 유지합니다. (혹시 모를 다른 클라이언트 대응)
+        data = {}
+        if "|" in payload:
+            payload = payload.split("|", 1)[-1].strip()
+        pairs = payload.split(';')
+        for pair in pairs:
+            if '=' in pair:
+                k, v = pair.split('=', 1)
+                data[k.strip()] = v.strip()
+        return data
 
 def clean_tts_text(text: str) -> str:
     """
@@ -111,15 +116,16 @@ def save_imu_raw_data(payload_dict: dict):
     try:
         now = now_str()
         
-        # 수치 데이터 파싱 및 안전한 float 변환
-        pitch = float(payload_dict.get('pitch', 0.0))
+        # 클라이언트가 보낸 roll, pitch, yaw 키를 사용합니다.
         roll = float(payload_dict.get('roll', 0.0))
+        pitch = float(payload_dict.get('pitch', 0.0))
         yaw = float(payload_dict.get('yaw', 0.0))
         
         sql = "INSERT INTO imu_data (ts, pitch, roll, yaw) VALUES (%s, %s, %s, %s)"
-        CURSOR.execute(sql, (now, pitch, roll, yaw))
+        # 순서를 Pitch, Roll, Yaw 순으로 맞추는 것이 좋습니다 (DB 테이블 순서에 따라)
+        CURSOR.execute(sql, (now, pitch, roll, yaw)) 
         DB_CONN.commit()
-        print(f"[{now}] [DB-OK] Raw data saved to imu_data: R:{roll:.2f} P:{pitch:.2f}")
+        print(f"[{now}] [DB-OK] Raw data saved to imu_data: R:{roll:.2f} P:{pitch:.2f} Y:{yaw:.2f}")
     except Exception as e:
         print(f"[{now}] [DB-ERROR] imu_data 테이블 저장 실패: {e}")
 
@@ -213,6 +219,74 @@ def on_connect(client, userdata, flags, rc):
     else:
         print("[FAIL] Connection failed, code:", rc)
 
+# === [데이터 라우터] RAW 데이터 저장 및 임계값 초과 시 events 테이블에 경고를 기록하는 핵심 로직.===
+def process_and_save_data(msg):
+    """
+    수신된 MQTT 메시지를 분석하여 알맞은 테이블에 저장하고, 
+    필요 시 이벤트를 생성합니다.
+    """
+    
+    # 1. 토픽 파싱
+    topic = msg.topic
+    payload = msg.payload.decode('utf-8')
+    payload_dict = parse_payload_to_dict(payload)
+    
+    # 토픽에서 모듈/액션 추출 (예: project/IMU/RAW -> module=IMU, action=RAW)
+    parts = topic.split('/')
+    module_action_str = parts[-2] + '/' + parts[-1] # 예: IMU/RAW
+    
+    parts_ma = module_action_str.split('/')
+    module = parts_ma[0].upper() if parts_ma else "UNKNOWN"
+    action = parts_ma[1].upper() if len(parts_ma) > 1 else "RAW" # RAW를 기본 액션으로 가정
+
+    # =======================================================
+    # 2. 데이터 라우팅 및 저장 (수정 및 확장 필요)
+    # =======================================================
+    
+    # IMU 원시 데이터 (IMU/RAW) -> imu_data 저장 및 이벤트 감지
+    if module == "IMU" and action == "RAW": 
+        
+        # 2-1. 원시 데이터 저장 (imu_data)
+        save_imu_raw_data(payload_dict)
+        print(f"[DB] Saved IMU RAW data to imu_data table.")
+        
+        # 2-2. 이벤트 감지 및 생성 (events)
+        roll_angle = payload_dict.get('roll', 0.0)
+        RISK_THRESHOLD = 20.0 # 임계값 설정 (예: 20도)
+
+        if abs(roll_angle) > RISK_THRESHOLD:
+            # Roll 각도가 위험 임계값을 초과했을 때만 events에 기록
+            event_type = "TILT_ALERT"
+            event_message = f"심한 기울기 감지: Roll {roll_angle:.2f}도 초과."
+            
+            # save_event_log 함수는 events 테이블에 저장해야 합니다.
+            save_event_log("IMU", event_type, event_message)
+            print(f"[EVENT] RISK ALERT generated for Roll: {roll_angle:.2f}")
+
+    # VISION 원시 데이터 (VISION/RAW) -> vision_data 저장 및 이벤트 감지
+    elif module == "VISION" and action == "RAW":
+        
+        # 2-3. 원시 데이터 저장 (vision_data)
+        save_vision_data(payload_dict)
+        print(f"[DB] Saved VISION RAW data to vision_data table.")
+        
+        # 2-4. 이벤트 감지 및 생성 (events)
+        # 예시: payload_dict 안에 'detected_person' 키가 있고 값이 True일 경우
+        is_person_detected = payload_dict.get('person_detected', False) 
+        
+        if is_person_detected:
+            event_type = "INTRUSION_ALERT"
+            event_message = "배 앞 갑판에 사람 접근 감지됨."
+            save_event_log("VISION", event_type, event_message)
+            print(f"[EVENT] Intruder Alert generated.")
+
+    # 그 외 일반 시스템/STT 이벤트 -> events 테이블
+    else: 
+        # STT, DB 로그, 기타 관리 목적의 로그는 events에 바로 저장
+        save_event_log(module, action, payload)
+        print(f"[LOG] Saved general log to events table. Module: {module}")
+        
+# === [MQTT 콜백] 명령어 처리 후 데이터 라우팅을 'process_and_save_data'로 위임하는 진입점. ===
 def on_message(client, userdata, msg):
     """메시지가 수신될 때 호출되며, 토픽에 따라 데이터 저장 또는 명령을 처리합니다."""
     now = now_str() 
@@ -234,33 +308,9 @@ def on_message(client, userdata, msg):
              save_event_log("SERVER", "CMD_QUERY", payload)
         return
 
-    # 2. === 모듈 로그 DB 저장 로직 (토픽 기반 분기) ===
+    # 2. === 데이터 처리 로직을 새로운 함수로 위임 ===
+    process_and_save_data(msg)
     
-    # TOPIC_BASE 뒤의 내용 (예: VISION/EVT 또는 IMU/raw) 추출
-    try:
-        module_action_str = topic.split(TOPIC_BASE, 1)[-1]
-    except IndexError:
-        save_event_log("UNKNOWN", "RAW_MSG", f"Topic:{topic}, Payload:{payload}")
-        return
-
-    # 토픽에서 모듈/액션 추출 (예: VISION/EVT -> module=VISION, action=EVT)
-    parts = module_action_str.split('/')
-    module = parts[0].upper() if parts else "UNKNOWN"
-    action = parts[1].upper() if len(parts) > 1 else "EVT"
-
-    # IMU Raw Data (연속 센서 수치) - imu_data 테이블
-    if module == "IMU" and action == "RAW": 
-        payload_dict = parse_payload_to_dict(payload)
-        save_imu_raw_data(payload_dict)
-    
-    # VISION 또는 POSE 이벤트 - vision_data 테이블
-    elif module in ["VISION", "POSE"]:
-        payload_dict = parse_payload_to_dict(payload)
-        save_vision_data(module, action, payload_dict)
-    
-    # 나머지 일반 이벤트 (STT, IMU RISK, DB|LOG 등) - events 테이블
-    else: 
-        save_event_log(module, action, payload)
 
 # === MQTT 클라이언트 및 메인 루프 ===
 client = mqtt.Client(client_id="MarineServer")
