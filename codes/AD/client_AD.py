@@ -57,7 +57,7 @@ cls_h, cls_w = 0, 0
 cap = None
 deployed_model = None
 
-class_names = ["Buoy", "Reef", "Island", "Ship", "Bridge", "Dockside", "Animal"]
+class_names = ["Buoy", "Reef", "Island", "Ship", "Lighthouse"]
 last_frame_boxes = [] # NMS/스무딩을 위한 이전 프레임 박스
 OPTIMAL_THRESHOLD = 0.7 # Anomaly Detection 임계값
 MODEL_INPUT_SIZE = 224
