@@ -154,23 +154,20 @@ def initialize_vision():
         deployed_model.eval()
         print(f"[{now_str()}] ✅ PyTorch Anomaly 모델 로드 완료.")
 
-        # 웹캠 열기: **카메라 초기화 다중 시도 로직 (안정성 확보)**
-        # 0번 인덱스를 우선 시도하고, V4L2 백엔드를 명시하여 안정성을 높입니다.
+        # 웹캠 열기: **카메라 초기화 다중 시도 로직 (특수 인덱스 -1 추가)**
+        # -1 인덱스를 추가하여 특정 Linux 환경 및 CSI 카메라를 위한 fallback을 시도합니다.
         
-        # --- [!!! 카메라 인덱스 시도 목록 !!!] ---
+        # --- [!!! 카메라 인덱스 시도 목록: -1, 0-9번 인덱스 및 V4L2/ANY 백엔드 시도 !!!] ---
         capture_attempts = [
-            (0, cv2.CAP_V4L2), (0, 0), # 0번 인덱스에 V4L2/기본 백엔드 시도 (가장 안정적)
-            (1, cv2.CAP_V4L2), (1, 0), # 1번 인덱스
-            (2, cv2.CAP_V4L2), (2, 0), # 2번 인덱스
-            (3, cv2.CAP_V4L2), (3, 0), # 3번 인덱스
-            (4, cv2.CAP_V4L2), (4, 0), # 4번 인덱스
-            (5, cv2.CAP_V4L2), (5, 0)  # 5번 인덱스
+            (-1, 0), # 1. 특수 인덱스 -1 시도 (CSI 또는 일부 리눅스 기본 카메라 fallback)
+            (0, cv2.CAP_V4L2), (1, cv2.CAP_V4L2), (2, cv2.CAP_V4L2), # V4L2 우선 시도
+            (0, cv2.CAP_ANY),  (1, cv2.CAP_ANY), (2, cv2.CAP_ANY),  # ANY 백엔드 시도 
+            (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0), (9, 0) # 더 넓은 인덱스 범위 시도
         ]
         # --------------------------------------------------------
         
         cap = None
         for index, api_preference in capture_attempts:
-            # 백엔드 명시 시도 (api_preference = cv2.CAP_V4L2) 또는 기본 백엔드 시도
             if api_preference != 0:
                 cap = cv2.VideoCapture(index, api_preference)
             else:
@@ -186,11 +183,9 @@ def initialize_vision():
                 break # 성공하면 루프 종료
             
         if cap is None or not cap.isOpened():
-            # 이 메시지를 보게 되면, 인덱스 0 외의 다른 인덱스를 시도해야 하거나 권한 문제가 남아있는 것입니다.
-            raise RuntimeError("웹캠을 열 수 없습니다. 0~5번 인덱스 및 V4L2 백엔드 시도 실패.")
+            # 최종적으로 실패하면 오류 발생
+            raise RuntimeError("웹캠을 열 수 없습니다. 모든 인덱스와 백엔드 시도 실패. 하드웨어 연결 및 드라이버 상태를 확인하세요.")
         
-        # 웹캠 열기 성공 메시지는 루프 내부에서 출력됩니다.
-
     except Exception as e:
         print(f"[{now_str()}] ❌ CRITICAL: 초기화 실패 - {e}")
         sys.exit(1)
@@ -308,12 +303,16 @@ def run_inference_and_publish(client):
     # --------------------------
     
     # 5-1. 기본 RAW 데이터 (모든 탐지 결과 포함)
-    raw_payload = json.dumps({
+    # 서버의 save_vision_data(action, payload_dict) 요구사항을 맞추기 위해 topic_base 및 action 필드를 추가합니다.
+    raw_data = {
         "timestamp": now_str(),
         "detections": detections,
         "total_count": len(detections),
         "anomaly_count": sum(1 for d in detections if d['anomaly']),
-    })
+        "topic_base": TOPIC_BASE, # 서버 요구사항 충족
+        "action": "RAW"           # 서버 요구사항 충족
+    }
+    raw_payload = json.dumps(raw_data)
     client.publish(f"{TOPIC_BASE}/RAW", raw_payload, qos=0)
     print(f"[{now_str()}] INFO PUB :: {TOPIC_BASE}/RAW → Sent {len(detections)} detections.")
 
@@ -322,11 +321,14 @@ def run_inference_and_publish(client):
         
         alert_summary = f"위험 감지: 총 {len(detections)}개 객체 중 {sum(1 for d in detections if d['anomaly'])}개가 이상 징후."
         
-        alert_payload = json.dumps({
+        alert_data = {
             "level": 5 if anomaly_detected else 3,
             "message": alert_summary,
-            "details": [d for d in detections if d['anomaly'] or d['object_type'] in ['Ship', 'Animal']]
-        })
+            "details": [d for d in detections if d['anomaly'] or d['object_type'] in ['Ship', 'Animal']],
+            "topic_base": TOPIC_BASE, # 서버 요구사항 충족
+            "action": "ALERT"         # 서버 요구사항 충족
+        }
+        alert_payload = json.dumps(alert_data)
         client.publish(f"{TOPIC_BASE}/ALERT", alert_payload, qos=1) # QOS 1로 중요 경고 전송
         print(f"[{now_str()}] ⚠️ ALERT PUB :: {TOPIC_BASE}/ALERT → {alert_summary}")
         
@@ -376,3 +378,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
