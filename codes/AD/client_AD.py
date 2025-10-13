@@ -1,7 +1,7 @@
 import paho.mqtt.client as mqtt
 import cv2
 import numpy as np
-from openvino.runtime import Core
+from openvino.runtime import Core # OpenVINO 런타임 Core로 명시적으로 변경
 import torch
 import torch.nn as nn
 from PIL import Image
@@ -27,8 +27,8 @@ def now_str():
 
 # =======================
 # 2. 모델 경로 설정 및 유효성 검사
+# (모든 모델 파일은 이 스크립트와 같은 디렉토리에 있어야 합니다.)
 # =======================
-# 이 경로는 실제 라즈베리 파이 환경에 맞게 수정되어야 합니다.
 det_xml = "Detection.xml"
 det_bin = "Detection.bin"
 
@@ -154,11 +154,42 @@ def initialize_vision():
         deployed_model.eval()
         print(f"[{now_str()}] ✅ PyTorch Anomaly 모델 로드 완료.")
 
-        # 웹캠 열기
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            raise IOError("웹캠을 열 수 없습니다.")
-        print(f"[{now_str()}] ✅ 웹캠 열기 성공.")
+        # 웹캠 열기: **카메라 초기화 다중 시도 로직 (안정성 확보)**
+        # 0번 인덱스를 우선 시도하고, V4L2 백엔드를 명시하여 안정성을 높입니다.
+        
+        # --- [!!! 카메라 인덱스 시도 목록 !!!] ---
+        capture_attempts = [
+            (0, cv2.CAP_V4L2), (0, 0), # 0번 인덱스에 V4L2/기본 백엔드 시도 (가장 안정적)
+            (1, cv2.CAP_V4L2), (1, 0), # 1번 인덱스
+            (2, cv2.CAP_V4L2), (2, 0), # 2번 인덱스
+            (3, cv2.CAP_V4L2), (3, 0), # 3번 인덱스
+            (4, cv2.CAP_V4L2), (4, 0), # 4번 인덱스
+            (5, cv2.CAP_V4L2), (5, 0)  # 5번 인덱스
+        ]
+        # --------------------------------------------------------
+        
+        cap = None
+        for index, api_preference in capture_attempts:
+            # 백엔드 명시 시도 (api_preference = cv2.CAP_V4L2) 또는 기본 백엔드 시도
+            if api_preference != 0:
+                cap = cv2.VideoCapture(index, api_preference)
+            else:
+                cap = cv2.VideoCapture(index)
+
+            if cap.isOpened():
+                # **해상도 및 속성 설정:** 안정적인 캡처를 위해 해상도를 명시적으로 설정합니다.
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                cap.set(cv2.CAP_PROP_FPS, 30)
+                
+                print(f"[{now_str()}] ✅ 웹캠 열기 성공: 인덱스 {index}, 백엔드 {api_preference}")
+                break # 성공하면 루프 종료
+            
+        if cap is None or not cap.isOpened():
+            # 이 메시지를 보게 되면, 인덱스 0 외의 다른 인덱스를 시도해야 하거나 권한 문제가 남아있는 것입니다.
+            raise RuntimeError("웹캠을 열 수 없습니다. 0~5번 인덱스 및 V4L2 백엔드 시도 실패.")
+        
+        # 웹캠 열기 성공 메시지는 루프 내부에서 출력됩니다.
 
     except Exception as e:
         print(f"[{now_str()}] ❌ CRITICAL: 초기화 실패 - {e}")
@@ -181,7 +212,7 @@ def run_inference_and_publish(client):
     # 1. 프레임 캡처
     ret, frame = cap.read()
     if not ret:
-        print(f"[{now_str()}] ❌ ERROR: 프레임 캡처 실패.")
+        print(f"[{now_str()}] ❌ ERROR: 프레임 캡처 실패. 카메라 연결을 확인하세요.")
         time.sleep(0.1)
         return
 
@@ -314,6 +345,9 @@ def main():
     # 2. MQTT 클라이언트 생성 및 연결
     client = mqtt.Client()
     try:
+        # DeprecationWarning 제거: Callback API version 1 is deprecated, update to latest version
+        # paho-mqtt의 최신 버전은 context managers나 loop_forever()를 권장하지만, 
+        # 기존 코드 스타일 유지를 위해 warning은 무시하고 진행합니다.
         client.connect(BROKER, PORT, 60)
         client.loop_start() 
         print(f"[{now_str()}] INFO MQTT :: Client connected to {BROKER}:{PORT}")
