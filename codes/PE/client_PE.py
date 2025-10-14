@@ -10,7 +10,7 @@ import paho.mqtt.client as mqtt
 import json
 from datetime import datetime, timezone
 # ====================================================
-# 0. 고정 카메라 할당을 위한 모듈 임포트
+# 0. 고정 카메라 할당을 위한 모듈 임포트 (수정된 부분 1/2)
 # camera_init_robust.py 파일이 이 스크립트와 같은 경로에 있어야 합니다.
 # ====================================================
 from camera_init_robust import find_camera_by_vid_pid 
@@ -64,6 +64,7 @@ RAW_PUBLISH_INTERVAL = 15
 
 # ============================================
 # MoveNet 포즈 추정 모델
+# (기존 코드와 동일)
 # ============================================
 class MoveNetPose:
     """MoveNet Thunder - 라즈베리파이5 최적화"""
@@ -169,6 +170,7 @@ class MoveNetPose:
 
 # ============================================
 # 4. 룰 기반 낙상 감지 및 유틸리티 함수
+# (기존 코드와 동일)
 # ============================================
 def estimate_motion(prev_kp, curr_kp):
     """평균 키포인트 이동량 (걷기 인식용)"""
@@ -320,28 +322,16 @@ def is_in_danger_zone(bbox, frame_width, frame_height):
     
     return in_danger_x and in_danger_y
 
-
-# --- 시각화 함수 제거 시작 ---
-# draw_danger_area 함수는 시각화 목적으로 필요하나, 
-# 서버에서 GUI 없이 백그라운드에서 실행 시 불필요하므로, 
-# cv2를 사용하는 코드를 주석 처리하고 기능만 남기거나 제거합니다. 
-# 이 프로젝트는 시각화 대신 MQTT 발행에 집중하므로 시각화 코드를 모두 제거합니다.
-
+# 시각화 더미 함수
 def draw_danger_area(frame):
-    """위험구역 시각화 (GUI 미사용으로 인해 더미 함수로 남겨둠)"""
-    # 원본 frame을 수정하지 않고 바로 반환하여 시각화 로직을 건너뜁니다.
     return frame
 
 def draw_zone_warnings(frame, zone_warnings):
-    """위험구역 경고 시각화 (GUI 미사용으로 인해 더미 함수로 남겨둠)"""
-    # 원본 frame을 수정하지 않고 바로 반환하여 시각화 로직을 건너뜁니다.
     return frame
-
-# --- 시각화 함수 제거 끝 ---
-
 
 # ============================================
 # 간단한 트래커 (IoU 기반)
+# (기존 코드와 동일)
 # ============================================
 
 class SimpleTracker:
@@ -411,6 +401,7 @@ class SimpleTracker:
 
 # ============================================
 # YOLOv8 검출기
+# (기존 코드와 동일)
 # ============================================
 
 class YOLOv8_Detector:
@@ -445,24 +436,13 @@ class YOLOv8_Detector:
         
         return np.array(bboxes, dtype=np.float32), np.array(scores, dtype=np.float32)
 
-
-# ============================================
-# 스켈레톤 그리기 (GUI 미사용으로 인해 제거)
-# ============================================
-
-SKELETON_CONNECTIONS = [
-    (0, 1), (0, 2), (1, 3), (2, 4),  # 얼굴
-    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # 팔
-    (5, 11), (6, 12), (11, 12),  # 몸통
-    (11, 13), (13, 15), (12, 14), (14, 16)  # 다리
-]
-
+# 시각화 더미 함수
 def draw_skeleton(frame, keypoints):
-    """스켈레톤 그리기 (GUI 미사용으로 인해 더미 함수로 남겨둠)"""
     return frame
 
 # ============================================
 # MQTT 발행 함수
+# (기존 코드와 동일)
 # ============================================
 def on_connect(client, userdata, flags, rc):
     """MQTT 연결 콜백"""
@@ -525,7 +505,7 @@ def main():
     except Exception as e:
         print(f"[{now_str()}] ❌ Failed to connect to MQTT broker: {e}")
         
-    # 4. 카메라 초기화
+    # 4. 카메라 초기화 (수정된 부분 2/2)
     print("\n2️⃣ Opening camera...")
     
     # ============================================================
@@ -552,6 +532,7 @@ def main():
         mqtt_client.loop_stop()
         return
     print(f"[{now_str()}] ✅ Camera opened")
+
     # 상태 변수
     fall_counters = {}
     zone_timers = {}
@@ -702,18 +683,6 @@ def main():
                 fps = 1.0 / (end_time - fps_time + 1e-6)
                 fps_time = end_time
                 print(f"[{now_str()}] [PUB-PE-RAW:INFO] ✅ RAW data sent (Tracks: {len(current_tracks)}) (FPS: {fps:.1f})")
-
-                # --- 화면 표시 및 종료 로직 제거 ---
-            # cv2.imshow('Fall Detection + Danger Zone (MQTT PE Client)', frame)
-            
-            # # 비디오 저장 (제거)
-            # if writer:
-            #     writer.write(frame)
-            
-            # # 종료 (Ctrl+C를 사용하도록 변경)
-            # if cv2.waitKey(1) & 0xFF == ord('q'):
-            #     break
-            # --- 제거 끝 ---
 
             # 짧은 대기 시간을 주어 CPU 사용량을 낮춥니다.
             time.sleep(0.01) # 약 100 FPS (비디오 처리 시간 제외)

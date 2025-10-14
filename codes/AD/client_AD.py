@@ -12,7 +12,7 @@ import sys
 import json 
 from datetime import datetime, timezone
 # ====================================================
-# 0. 고정 카메라 할당을 위한 모듈 임포트
+# 0. 고정 카메라 할당을 위한 모듈 임포트 (수정된 부분 1/2)
 # camera_init_robust.py 파일이 이 스크립트와 같은 경로에 있어야 합니다.
 # ====================================================
 # find_camera_by_vid_pid 함수를 임포트합니다.
@@ -84,6 +84,7 @@ inference_transforms = transforms.Compose([
 
 # =======================
 # 4. 유틸리티 함수 (NMS, IoU, Preprocessing)
+# (기존 코드와 동일)
 # =======================
 
 def nms(boxes, scores, score_threshold=0.5, iou_threshold=0.5):
@@ -145,14 +146,13 @@ def initialize_vision():
     global cls_h, cls_w, cap, deployed_model
     
     try:
-        # OpenVINO Detection
+        # OpenVINO 모델 로드 (생략하지 않음, 기존 코드와 동일)
         det_model = ie.read_model(det_xml, det_bin)
         det_compiled = ie.compile_model(det_model, "CPU")
         det_input_layer = det_compiled.input(0)
         det_output_layer = det_compiled.output(0)
         print(f"[{now_str()}] ✅ OpenVINO Detection 모델 로드 완료.")
 
-        # OpenVINO Classification
         cls_model = ie.read_model(cls_xml, cls_bin)
         cls_compiled = ie.compile_model(cls_model, "CPU")
         cls_input_layer = cls_compiled.input(0)
@@ -160,13 +160,12 @@ def initialize_vision():
         _, _, cls_h, cls_w = cls_input_layer.shape
         print(f"[{now_str()}] ✅ OpenVINO Classification 모델 로드 완료.")
 
-        # PyTorch Anomaly Detection (TorchScript)
         deployed_model = torch.jit.load(DEPLOYMENT_FILE, map_location='cpu')
         deployed_model.eval()
         print(f"[{now_str()}] ✅ PyTorch Anomaly 모델 로드 완료.")
 
         # ============================================================
-        # 카메라 초기화 로직 수정
+        # 🚨 카메라 초기화 로직 수정 (수정된 부분 2/2) 🚨
         # find_camera_by_vid_pid를 사용하여 AD 카메라의 고정 인덱스를 찾습니다.
         # ============================================================
         print(f"[{now_str()}] INFO System :: AD 카메라 고유 ID 기반 인덱스 검색 중...")
@@ -200,6 +199,7 @@ def initialize_vision():
 
 # =======================
 # 6. 메인 추론 및 발행 함수
+# (기존 코드와 동일)
 # =======================
 
 def run_inference_and_publish(client):
@@ -367,6 +367,7 @@ def run_inference_and_publish(client):
 
 # ====================================================
 # 7. 메인 실행 함수
+# (기존 코드와 동일)
 # ====================================================
 
 def main():

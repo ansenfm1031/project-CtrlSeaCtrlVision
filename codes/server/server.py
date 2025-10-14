@@ -10,6 +10,7 @@ import re
 import json 
 import threading # STT 기능을 별도 스레드에서 실행하기 위함
 import speech_recognition as sr # STT 기능 추가
+import time # sleep 함수 사용
 
 # === DB 연결 (MariaDB) ===
 DB_HOST = "localhost"
@@ -23,6 +24,11 @@ PORT = 1883
 TOPIC_BASE = "project/"   # 모듈 로그 접두사 (예: project/IMU/RAW)
 COMMAND_TOPIC = "command/summary" # 항해일지 요약 명령
 QUERY_TOPIC = "command/query" # 일반 질의 명령
+
+# === 오디오 디버깅 설정 ===
+# STT 초기화 실패 시 어떤 장치가 사용 가능한지 확인하기 위한 변수
+# 기본값은 None이며, STT가 실패하면 이 변수를 통해 사용 가능한 장치 정보를 출력합니다.
+AUDIO_DEVICE_INFO = None 
 
 # === OpenAI 클라이언트 설정 ===
 client_llm = OpenAI() # 키는 환경 변수에서 자동 로드됩니다.
@@ -81,34 +87,88 @@ if DB_CONN is None:
     sys.exit(1)
 CURSOR = DB_CONN.cursor()
 
-def check_microphone():
+# --- 오디오 장치 디버깅 및 확인 함수 ---
+def list_audio_devices(recognizer: sr.Recognizer):
+    """시스템이 인식하는 모든 마이크/오디오 장치 목록을 출력합니다."""
+    global AUDIO_DEVICE_INFO
+    
+    print("\n--- 🎙️ 인식된 오디오 장치 목록 (PyAudio 기준) ---")
+    
+    try:
+        # PyAudio가 초기화되면 recognizer.pyaudio_module을 통해 접근 가능
+        p = recognizer.pyaudio_module 
+        
+        # PyAudio 모듈이 로드되지 않았을 경우 (예외가 발생한 경우)
+        if p is None:
+            print("❌ PyAudio 모듈을 로드할 수 없습니다. speech_recognition 라이브러리 설치를 확인하세요.")
+            return
+
+        info = p.PyAudio().get_host_api_info_by_index(0)
+        numdevices = info.get('deviceCount')
+        
+        if numdevices == 0:
+            print("⚠️ **오디오 장치가 전혀 감지되지 않았습니다.** ALSA 드라이버 상태를 확인하거나 snd-dummy 모듈을 로드해야 합니다.")
+            return
+            
+        AUDIO_DEVICE_INFO = []
+        
+        # 목록 출력 및 정보 저장
+        for i in range(0, numdevices):
+            device_info = p.PyAudio().get_device_info_by_host_api_device_index(0, i)
+            # 녹음 장치(마이크)만 필터링합니다.
+            if (device_info.get('maxInputChannels')) > 0: 
+                print(f"✅ Input Device index: {i} - {device_info.get('name')}")
+                AUDIO_DEVICE_INFO.append(device_info)
+                
+        print("---------------------------------------------------------")
+        if not AUDIO_DEVICE_INFO:
+             print("⚠️ **녹음 가능한 입력 장치(마이크)가 없습니다.**")
+
+    except Exception as e:
+        print(f"❌ 오디오 장치 목록을 가져오는 중 오류 발생: {e}")
+        print("   (이 오류는 PyAudio가 초기화 실패 시 흔히 발생합니다.)")
+
+
+def check_microphone(r: sr.Recognizer):
     """마이크가 시스템에 연결되어 있고 소리를 감지하는지 확인합니다."""
-    r = sr.Recognizer()
     
     print("\n--- 🎙️ 마이크 테스트 시작 ---")
     
+    # --------------------------------------------------------------------------------
+    # TODO: [사용자 지정] 여기에 STT를 시도할 마이크 장치 인덱스를 넣어보세요.
+    # 이전 단계에서 출력된 목록에서 'Dummy'나 실제 마이크 인덱스를 확인 후 여기에 입력합니다.
+    # 예시: DEVICE_INDEX = 3
+    # --------------------------------------------------------------------------------
+    DEVICE_INDEX = None # 기본값: 시스템 기본 마이크 사용
+
     try:
-        with sr.Microphone(sample_rate=16000) as source:
+        # 장치 인덱스를 명시적으로 지정하거나, None(기본값)을 사용합니다.
+        with sr.Microphone(device_index=DEVICE_INDEX, sample_rate=16000) as source:
             print("1. 마이크 연결 확인: 성공 (마이크 장치 접근 가능)")
-            print("2. 주변 소음 캘리브레이션 중 (1초)...")
+            print("2. 주변 소음 캘리브레이션 중 (1.0초)...")
             r.adjust_for_ambient_noise(source, duration=1.0)
-            print("3. 마이크 활성화 완료. 5초 동안 말해보세요.")
+            print("3. 마이크 활성화 완료. 3초 동안 소리를 들어봅니다.")
             
             try:
-                audio = r.listen(source, timeout=5, phrase_time_limit=5)
+                # 짧게 소리를 들어서 스트림이 유효한지 확인 (실제 녹음 시도)
+                audio = r.listen(source, timeout=3, phrase_time_limit=3) 
+                
                 if audio and len(audio.frame_data) > 0:
                     print("✅ 마이크 테스트 성공: 소리 감지 및 입력 데이터 확보 완료.")
                     return True
                 else:
-                    print("⚠️ 마이크 테스트 경고: 마이크가 연결되었으나, 5초 동안 유효한 소리를 감지하지 못했습니다.")
-                    return False
+                    print("⚠️ 마이크 테스트 경고: 마이크가 연결되었으나, 3초 동안 유효한 소리를 감지하지 못했습니다.")
+                    return True # 연결은 되었으므로, 일단 True를 반환하여 루프를 시도합니다.
             
             except sr.WaitTimeoutError:
-                print("⚠️ 마이크 테스트 경고: 마이크가 연결되었으나, 5초 동안 유효한 소리를 감지하지 못했습니다.")
-                return False
+                print("⚠️ 마이크 테스트 경고: 마이크가 연결되었으나, 3초 동안 유효한 소리를 감지하지 못했습니다. (조용한 환경일 수 있음)")
+                return True # 연결은 되었으므로, 일단 True를 반환하여 루프를 시도합니다.
                 
     except Exception as e:
-        print(f"❌ 마이크 테스트 실패: 오류 발생 ({e}). 'pyaudio'가 설치되었는지 확인하세요.")
+        # [Errno -9999] Unanticipated host error 등 치명적인 오류 발생 지점
+        print(f"❌ 마이크 테스트 치명적 실패: 오디오 스트림을 열 수 없습니다 ({e})")
+        # 실패 시 장치 목록을 출력하여 디버깅을 돕습니다.
+        list_audio_devices(r)
         return False
 
 def check_speaker():
@@ -123,10 +183,11 @@ def check_speaker():
         tts.save(TEST_FILENAME)
         print(f"1. TTS 파일 생성 완료: {TEST_FILENAME}")
         
+        # mpv 명령어 실행 (PipeWire 오류와 독립적)
         print("2. 스피커로 테스트 음성 재생 중...")
         os.system(f"mpv --no-terminal --volume=100 {TEST_FILENAME}") 
         
-        print("✅ 스피커 테스트 성공: 음성 출력을 확인했습니다.")
+        print("✅ 스피커 테스트 성공: 음성 출력을 확인했습니다. (TTS/TTS 기능 사용 가능)")
         return True
 
     except Exception as e:
@@ -149,29 +210,61 @@ def save_event_log(module: str, action: str, full_payload: str):
         print(f"[{now}] [DB-ERROR] events 테이블 저장 실패: {e}")
 # 'module' 인수를 사용하여 AD/PE/VISION을 명확히 구분
 def save_vision_data(module: str, action: str, payload_dict: dict):
-    """vision_data 테이블에 VISION/AD/PE 결과를 저장합니다."""
+    """
+    vision_data 테이블에 VISION/AD/PE 결과를 저장합니다. 
+    'detections' 리스트를 순회하며 각 탐지 객체별로 행을 삽입합니다.
+    """
     try:
         now = now_str()
+        # 1. RAW 데이터의 핵심인 'detections' 리스트를 추출합니다.
+        detections = payload_dict.get('detections', []) 
         
-        # 'action'은 보통 'RAW'이지만, object_type으로 사용될 수 있음.
-        object_type = payload_dict.get('type') or action 
-        # 클라이언트 JSON payload에 'level' 또는 'risk' 키가 있다고 가정
-        risk_level = int(payload_dict.get('level', 0) or payload_dict.get('risk', 0)) 
-        description = payload_dict.get('posture') or payload_dict.get('zone') or object_type
-        # json.dumps() 사용 시 한글이 깨지지 않도록 ensure_ascii=False 옵션을 추가했습니다.
-        detail_json = json.dumps(payload_dict, ensure_ascii=False) 
-        
+        if not detections:
+            print(f"[{now}] [WARN] No detections found in {module} RAW payload. Skipping DB insert.")
+            return
+
+        # 'vision_data' 테이블 스키마 가정: 
+        # (ts, module, object_type, risk_level, description, detail_json, confidence, track_id)
         sql = """
             INSERT INTO vision_data 
-            (ts, module, object_type, risk_level, description, detail_json) 
-            VALUES (%s, %s, %s, %s, %s, %s)
+            (ts, module, object_type, risk_level, description, detail_json, confidence, track_id) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
-        # module 인수로 받은 값을 사용 (AD, PE, VISION 중 하나)
-        CURSOR.execute(sql, (now, module, object_type, risk_level, description, detail_json))
+        
+        records_inserted = 0
+        # 2. 🚨핵심 수정🚨: detections 리스트를 순회하며 각 객체(탐지 결과)별로 DB에 행을 추가합니다.
+        for detection in detections:
+            # 개별 탐지 객체에서 데이터 추출
+            object_type = detection.get('object_type') or detection.get('type') or 'UNKNOWN'
+            # risk_level은 detection 내부에 있거나, 없으면 0
+            risk_level = int(detection.get('level', 0) or detection.get('risk', 0))
+            description = detection.get('action') or detection.get('posture') or detection.get('zone') or 'N/A'
+            confidence = detection.get('confidence', 0.0)
+            track_id = detection.get('track_id')
+            
+            # 개별 detection 객체만 JSON 문자열로 저장
+            detail_json = json.dumps(detection, ensure_ascii=False) 
+            
+            # 3. 각 탐지 객체별로 DB에 한 행씩 삽입
+            CURSOR.execute(sql, (
+                now, 
+                module, 
+                object_type, 
+                risk_level, 
+                description, 
+                detail_json,
+                confidence,
+                track_id
+            ))
+            records_inserted += 1
+
         DB_CONN.commit()
-        print(f"[{now}] [DB-OK] Data saved to vision_data: ({module}/{object_type}) Risk:{risk_level}")
+        print(f"[{now}] [DB-OK] Saved {records_inserted} records to vision_data from {module} RAW.")
+        
     except Exception as e:
-        print(f"[DB-ERROR] vision_data 테이블 저장 실패: {e}")
+        # DB 연결이 끊어지거나 SQL 구문 오류가 발생하면 여기서 잡힙니다.
+        print(f"[DB-ERROR] vision_data 테이블 저장 실패: {e}. Payload: {payload_dict.get('detections', 'N/A')[:100]}")
+        DB_CONN.rollback() # 안전하게 롤백
 
 def save_imu_raw_data(payload_dict: dict):
     """imu_data 테이블에 연속적인 Pitch/Roll/Yaw 데이터를 저장"""
@@ -358,23 +451,38 @@ def stt_listening_loop():
     """마이크 입력을 받고 음성을 텍스트로 변환하여 MQTT로 전송하는 독립 루프입니다."""
     r = sr.Recognizer()
 
-    # 마이크 설정 및 캘리브레이션
+    # MQTT publish는 독립 스레드에서 publish.single을 사용합니다.
+    mqtt_broker = BROKER 
+    
+    # ----------------------------------------------------------------------
+    # TODO: [사용자 지정] 여기에 STT를 시도할 마이크 장치 인덱스를 넣어보세요.
+    # check_microphone 실행 후 출력된 목록에서 'Dummy' 장치 인덱스를 확인하세요.
+    # ----------------------------------------------------------------------
+    DEVICE_INDEX = None # 기본값: 시스템 기본 마이크 사용
+
+    # 마이크 설정 및 캘리브레이션 (STT 성공을 위한 try-except 블록)
     try:
-        # 16000Hz 샘플링 속도로 마이크를 엽니다.
-        with sr.Microphone(sample_rate=16000) as source:
+        # 장치 인덱스를 명시적으로 지정하거나, None(기본값)을 사용합니다.
+        with sr.Microphone(device_index=DEVICE_INDEX, sample_rate=16000) as source:
             print("[STT-THREAD] Ambient noise calibrating...")
             r.adjust_for_ambient_noise(source, duration=1.5)
             print("[STT-THREAD] Setup complete. Starting speech recognition loop...")
+    
     except Exception as e:
+        # 초기화 중 치명적인 오류 발생 (예: Errno -9999)
         print(f"[CRITICAL] STT Initialization Error (Microphone): {e}")
-        return # 스레드 종료
-
-    # MQTT publish는 독립 스레드에서 publish.single을 사용합니다.
-    mqtt_broker = BROKER 
+        print("----------------------------------------------------------------------")
+        print("💡 **STT 실패 안내:** 오디오 장치 접근 실패로 STT 스레드를 종료합니다.")
+        print("   **해결 방법:** 위에서 출력된 장치 목록(만약 있다면)을 확인하고,")
+        print("   `stt_listening_loop` 함수의 `DEVICE_INDEX` 변수를 수정해보세요.")
+        print("----------------------------------------------------------------------")
+        # 실패 시 STT 스레드 자체를 종료하고 메인 서버에 영향을 주지 않음
+        return 
 
     while True:
         try:
-            with sr.Microphone(sample_rate=16000) as source:
+            # 장치 인덱스를 루프 내부에서도 명시적으로 지정하여 사용합니다.
+            with sr.Microphone(device_index=DEVICE_INDEX, sample_rate=16000) as source:
                 print("\n[STT-THREAD] Listening for command (Say '최근 N분 요약해줘')...")
                 # 음성 인식 대기 (최대 10초 발화 길이 제한)
                 audio = r.listen(source, timeout=None, phrase_time_limit=10) 
@@ -403,6 +511,10 @@ def stt_listening_loop():
             print("[STT-THREAD] No speech detected.")
         except sr.RequestError as e:
             print(f"[STT-THREAD] Could not request results from Google service; {e}")
+        except Exception as e:
+            # 루프 중 예상치 못한 기타 오류 발생 시 (재시도를 위해 sleep 후 continue)
+            print(f"[STT-THREAD] An unexpected error occurred in loop: {e}. Retrying in 1s...")
+            time.sleep(1)
 
 
 # === MQTT 콜백 함수 (메인 로직) ===
@@ -521,7 +633,8 @@ def on_message(client, userdata, msg):
     
 
 # === MQTT 클라이언트 및 메인 루프 ===
-client = mqtt.Client(client_id="MarineServer")
+# MQTTv311 프로토콜 명시로 DeprecationWarning 해결
+client = mqtt.Client(client_id="MarineServer", protocol=mqtt.MQTTv311) 
 client.on_connect = on_connect
 client.on_message = on_message
 
@@ -532,15 +645,35 @@ client.connect(BROKER, PORT, 60)
 # === 루프 ===
 try:
     # 1. STT 리스닝 스레드 시작
-    stt_thread = threading.Thread(target=stt_listening_loop)
-    stt_thread.daemon = True # 메인 스레드 종료 시 함께 종료
-    stt_thread.start()
     
-    # 2. 메인 MQTT 루프 실행 (STT와 동시 실행)
+    # STT 스레드를 시작하기 전에 오디오 테스트를 실행하여 장치 인덱스 정보를 얻습니다.
+    # check_microphone 내부에서 오디오 장치 목록(list_audio_devices)을 출력합니다.
+    stt_recognizer = sr.Recognizer()
+    
+    # 오디오 테스트는 마이크 스트림을 여는 데 실패하면 자동으로 장치 목록을 출력합니다.
+    microphone_test_result = check_microphone(stt_recognizer)
+    
+    if microphone_test_result:
+        # 마이크 테스트에 성공했거나, 루프를 시도할 수 있는 상태일 경우에만 스레드를 시작합니다.
+        stt_thread = threading.Thread(target=stt_listening_loop)
+        stt_thread.daemon = True # 메인 스레드 종료 시 함께 종료
+        stt_thread.start()
+    else:
+        print("\n[WARN] 마이크 초기화 실패로 STT/TTS 기능 스레드는 시작되지 않았습니다.")
+        print("       출력된 장치 목록을 확인하고, 코드의 DEVICE_INDEX를 수동으로 설정해보세요.")
+
+
+    # 2. 스피커 테스트 (TTS 기능 확인)
+    check_speaker()
+    
+    # 3. 메인 MQTT 루프 실행 (STT와 동시 실행)
     client.loop_forever()
     
 except KeyboardInterrupt:
-    print("\n[EXIT] Server stopped by user")
+    # Ctrl+C가 눌렸을 때 깔끔하게 종료
+    print("\n[EXIT] Server is stopping gracefully...")
     client.disconnect()
     CURSOR.close() 
     DB_CONN.close()
+    print("[EXIT] Server stopped successfully.")
+
