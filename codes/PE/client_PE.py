@@ -9,6 +9,11 @@ from ultralytics import YOLO
 import paho.mqtt.client as mqtt
 import json
 from datetime import datetime, timezone
+# ====================================================
+# 0. 고정 카메라 할당을 위한 모듈 임포트
+# camera_init_robust.py 파일이 이 스크립트와 같은 경로에 있어야 합니다.
+# ====================================================
+from camera_init_robust import find_camera_by_vid_pid 
 
 # ============================================
 # MQTT 설정 (서버와 동일해야 합니다)
@@ -486,7 +491,9 @@ def publish_mqtt_message(client, topic, payload):
 
 def main():
     parser = argparse.ArgumentParser(description='Raspberry Pi 5 Optimized Fall Detection')
-    parser.add_argument('--camera', type=str, default='0', help='Camera source or video path')
+    # --- [!] 카메라 인덱스를 args.camera 대신 find_camera_by_vid_pid로 결정 ---
+    parser.add_argument('--camera', type=str, default='0', help='Camera source or video path (This is now overridden by fixed index logic)')
+    # --------------------------------------------------------------------------
     parser.add_argument('--device', type=str, default='cpu', help='cpu only for RPi5')
     parser.add_argument('--model', type=str, default='thunder', choices=['thunder', 'lightning'])
     parser.add_argument('--save_out', type=str, default='', help='Save output video (GUI 제거로 이 기능은 사용하지 않습니다)')
@@ -518,29 +525,33 @@ def main():
     except Exception as e:
         print(f"[{now_str()}] ❌ Failed to connect to MQTT broker: {e}")
         
-    # 4. 카메라
+    # 4. 카메라 초기화
     print("\n2️⃣ Opening camera...")
-    cam_source = args.camera
-    if cam_source.isdigit():
-        # camera_id=0을 사용 (RPI 카메라 모듈 또는 웹캠)
-        cap = cv2.VideoCapture(int(cam_source)) 
-    else:
-        # 비디오 파일 경로
-        cap = cv2.VideoCapture(cam_source)
-    cap = cv2.VideoCapture(int(args.camera) if args.camera.isdigit() else args.camera)
+    
+    # ============================================================
+    # 🚨 카메라 초기화 로직 수정: 고정 인덱스 할당 🚨
+    # find_camera_by_vid_pid를 사용하여 PE 카메라의 고정 인덱스를 찾습니다.
+    # ============================================================
+    print(f"[{now_str()}] INFO System :: PE 카메라 고유 ID 기반 인덱스 검색 중...")
+    
+    # AD 인덱스는 무시하고, PE 인덱스만 추출합니다.
+    _, PE_CAMERA_INDEX = find_camera_by_vid_pid()
+    
+    if PE_CAMERA_INDEX == -1:
+        print(f"[{now_str()}] ❌ CRITICAL: PE 카메라 (VID:PID)를 찾을 수 없습니다. 연결 상태를 확인하거나 camera_init_robust.py의 설정을 확인하세요.")
+        mqtt_client.loop_stop()
+        return
+
+    print(f"[{now_str()}] ✅ PE 카메라 고정 인덱스 확보: {PE_CAMERA_INDEX}")
+    
+    # 확보된 인덱스로 카메라를 엽니다.
+    cap = cv2.VideoCapture(PE_CAMERA_INDEX)
     
     if not cap.isOpened():
-        print(f"[{now_str()}] ❌ Cannot open camera! Check source path or index.")
+        print(f"[{now_str()}] ❌ Cannot open camera at fixed index {PE_CAMERA_INDEX}! Check source or permissions.")
         mqtt_client.loop_stop()
         return
     print(f"[{now_str()}] ✅ Camera opened")
-
-    # --- 비디오 저장 및 시각화 관련 코드 제거 ---
-    writer = None
-    # if args.save_out: # 비디오 저장 기능 제거 (GUI 의존성)
-    #     ...
-    # --- 제거 끝 ---
-    
     # 상태 변수
     fall_counters = {}
     zone_timers = {}

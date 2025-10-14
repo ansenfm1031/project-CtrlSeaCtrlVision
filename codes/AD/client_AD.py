@@ -11,6 +11,12 @@ import time
 import sys
 import json 
 from datetime import datetime, timezone
+# ====================================================
+# 0. 고정 카메라 할당을 위한 모듈 임포트
+# camera_init_robust.py 파일이 이 스크립트와 같은 경로에 있어야 합니다.
+# ====================================================
+# find_camera_by_vid_pid 함수를 임포트합니다.
+from camera_init_robust import find_camera_by_vid_pid 
 
 # ====================================================
 # 1. 환경 설정 및 상수 정의
@@ -129,7 +135,7 @@ def dehaze(image):
     return J
 
 # =======================
-# 5. 초기화 함수 (모든 모델 로드)
+# 5. 초기화 함수 (모든 모델 로드 및 카메라 초기화)
 # =======================
 
 def initialize_vision():
@@ -159,36 +165,33 @@ def initialize_vision():
         deployed_model.eval()
         print(f"[{now_str()}] ✅ PyTorch Anomaly 모델 로드 완료.")
 
-        # 웹캠 열기: **카메라 초기화 다중 시도 로직 (특수 인덱스 -1 추가)**
-        # -1 인덱스를 추가하여 특정 Linux 환경 및 CSI 카메라를 위한 fallback을 시도합니다.
+        # ============================================================
+        # 카메라 초기화 로직 수정
+        # find_camera_by_vid_pid를 사용하여 AD 카메라의 고정 인덱스를 찾습니다.
+        # ============================================================
+        print(f"[{now_str()}] INFO System :: AD 카메라 고유 ID 기반 인덱스 검색 중...")
         
-        # --- [!!! 카메라 인덱스 시도 목록: -1, 0-9번 인덱스 및 V4L2/ANY 백엔드 시도 !!!] ---
-        capture_attempts = [
-            (-1, 0), # 1. 특수 인덱스 -1 시도 (CSI 또는 일부 리눅스 기본 카메라 fallback)
-            (0, cv2.CAP_V4L2), (1, cv2.CAP_V4L2), (2, cv2.CAP_V4L2), # V4L2 우선 시도
-            (0, cv2.CAP_ANY),  (1, cv2.CAP_ANY), (2, cv2.CAP_ANY),  # ANY 백엔드 시도 
-            (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0), (9, 0) # 더 넓은 인덱스 범위 시도
-        ]
+        # AD 인덱스만 추출하고, PE 인덱스는 무시합니다.
+        AD_CAMERA_INDEX, _ = find_camera_by_vid_pid()
         
-        cap = None
-        for index, api_preference in capture_attempts:
-            if api_preference != 0:
-                cap = cv2.VideoCapture(index, api_preference)
-            else:
-                cap = cv2.VideoCapture(index)
+        if AD_CAMERA_INDEX == -1:
+            raise RuntimeError("AD 카메라 (VID:PID)를 찾을 수 없습니다. 연결 상태를 확인하거나 camera_init_robust.py의 설정을 확인하세요.")
 
-            if cap.isOpened():
-                # 해상도 및 속성 설정: 안정적인 캡처
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                cap.set(cv2.CAP_PROP_FPS, 30)
-                
-                print(f"[{now_str()}] ✅ 웹캠 열기 성공: 인덱스 {index}, 백엔드 {api_preference}")
-                break # 성공하면 루프 종료
+        print(f"[{now_str()}] ✅ AD 카메라 고정 인덱스 확보: {AD_CAMERA_INDEX}")
+        
+        # 확보된 인덱스로 카메라를 엽니다.
+        cap = cv2.VideoCapture(AD_CAMERA_INDEX)
+
+        if cap.isOpened():
+            # 해상도 및 속성 설정
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, 30)
             
-        if cap is None or not cap.isOpened():
-            # 최종적으로 실패하면 오류 발생
-            raise RuntimeError("웹캠을 열 수 없습니다. 모든 인덱스와 백엔드 시도 실패. 하드웨어 연결 및 드라이버 상태를 확인하세요.")
+            print(f"[{now_str()}] ✅ 웹캠 열기 성공: 인덱스 {AD_CAMERA_INDEX}")
+        else:
+             # cv2.VideoCapture가 인덱스에 실패하면 오류 발생
+            raise RuntimeError(f"웹캠 인덱스 {AD_CAMERA_INDEX}를 열 수 없습니다.")
         
     except Exception as e:
         print(f"[{now_str()}] ❌ CRITICAL: 초기화 실패 - {e}")
