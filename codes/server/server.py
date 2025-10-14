@@ -92,15 +92,18 @@ def save_event_log(module: str, action: str, full_payload: str):
         print(f"[{now}] [DB-OK] Log saved to events: ({module}) {action}")
     except Exception as e:
         print(f"[{now}] [DB-ERROR] events 테이블 저장 실패: {e}")
-
+# 'module' 인수를 사용하여 AD/PE/VISION을 명확히 구분
 def save_vision_data(module: str, action: str, payload_dict: dict):
     """vision_data 테이블에 VISION/AD/PE 결과를 저장합니다."""
     try:
         now = now_str()
         
+        # 'action'은 보통 'RAW'이지만, object_type으로 사용될 수 있음.
         object_type = payload_dict.get('type') or action 
+        # 클라이언트 JSON payload에 'level' 또는 'risk' 키가 있다고 가정
         risk_level = int(payload_dict.get('level', 0) or payload_dict.get('risk', 0)) 
         description = payload_dict.get('posture') or payload_dict.get('zone') or object_type
+        # json.dumps() 사용 시 한글이 깨지지 않도록 ensure_ascii=False 옵션을 추가했습니다.
         detail_json = json.dumps(payload_dict, ensure_ascii=False) 
         
         sql = """
@@ -108,6 +111,7 @@ def save_vision_data(module: str, action: str, payload_dict: dict):
             (ts, module, object_type, risk_level, description, detail_json) 
             VALUES (%s, %s, %s, %s, %s, %s)
         """
+        # module 인수로 받은 값을 사용 (AD, PE, VISION 중 하나)
         CURSOR.execute(sql, (now, module, object_type, risk_level, description, detail_json))
         DB_CONN.commit()
         print(f"[{now}] [DB-OK] Data saved to vision_data: ({module}/{object_type}) Risk:{risk_level}")
@@ -119,11 +123,13 @@ def save_imu_raw_data(payload_dict: dict):
     try:
         now = now_str()
         
+        # 클라이언트가 보낸 roll, pitch, yaw 키를 사용합니다.
         roll = float(payload_dict.get('roll', 0.0) or payload_dict.get('roll_angle', 0.0)) 
         pitch = float(payload_dict.get('pitch', 0.0))
         yaw = float(payload_dict.get('yaw', 0.0))
         
         sql = "INSERT INTO imu_data (ts, pitch, roll, yaw) VALUES (%s, %s, %s, %s)"
+        # 순서를 DB 테이블 순서에 따라 Pitch, Roll, Yaw 순으로 맞춥니다.
         CURSOR.execute(sql, (now, pitch, roll, yaw)) 
         DB_CONN.commit()
         print(f"[{now}] [DB-OK] Raw data saved to imu_data: R:{roll:.2f} P:{pitch:.2f} Y:{yaw:.2f}")
