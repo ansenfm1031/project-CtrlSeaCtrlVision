@@ -1,5 +1,9 @@
 # 파일 이름: start_server.sh
 #!/bin/bash
+<<<<<<< Updated upstream
+=======
+deactivate
+>>>>>>> Stashed changes
 source .venv_server/bin/activate
 # 1. API 키 설정 (가장 중요)
 # 'sk-your-private-key-here' 부분을 발급받은 실제 OpenAI API 키로 대체하세요.
