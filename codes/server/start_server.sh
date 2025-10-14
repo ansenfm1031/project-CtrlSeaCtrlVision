@@ -1,6 +1,6 @@
 # 파일 이름: start_server.sh
 #!/bin/bash
-
+source .venv_server/bin/activate
 # 1. API 키 설정 (가장 중요)
 # 'sk-your-private-key-here' 부분을 발급받은 실제 OpenAI API 키로 대체하세요.
 export OPENAI_API_KEY='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'
