@@ -8,15 +8,23 @@ import tensorflow as tf
 from ultralytics import YOLO
 import paho.mqtt.client as mqtt
 import json
+from datetime import datetime, timezone
 
 # ============================================
 # MQTT 설정 (서버와 동일해야 합니다)
 # ============================================
 MQTT_BROKER = "10.10.14.73" 
 MQTT_PORT = 1883
-TOPIC_BASE = "project/"
-RAW_TOPIC = TOPIC_BASE + "VISION/RAW"
-ALERT_TOPIC = TOPIC_BASE + "VISION/ALERT"
+TOPIC_BASE = "project/vision"
+
+# 수정: 모듈 이름 및 토픽 분리
+PE_MODULE = "PE"
+RAW_TOPIC = TOPIC_BASE + "/" + PE_MODULE + "/RAW"
+ALERT_TOPIC = TOPIC_BASE + "/" + PE_MODULE + "/ALERT" # 경고 토픽도 PE 전용으로 분리
+
+def now_str():
+    """ISO 8601 형식의 현재 UTC 시각을 반환합니다."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # ============================================
 # 설정
@@ -52,7 +60,6 @@ RAW_PUBLISH_INTERVAL = 15
 # ============================================
 # MoveNet 포즈 추정 모델
 # ============================================
-
 class MoveNetPose:
     """MoveNet Thunder - 라즈베리파이5 최적화"""
     
@@ -65,21 +72,20 @@ class MoveNetPose:
         # TFLite 파일을 우선 시도
         model_path = f'movenet_{model_type}.tflite'
         if os.path.exists(model_path):
-            print(f"Found local TFLite model: {model_path}")
             try:
                 # TFLite 모델 로드
                 # WARNING: TensorFlow Lite Interpreter는 RPi에서 실행 시 CPU 최적화가 중요합니다.
                 self.interpreter = tf.lite.Interpreter(model_path=model_path)
                 self.interpreter.allocate_tensors()
                 self.use_tflite = True
-                print(f"✅ Loaded TFLite model successfully!")
+                print(f"[{now_str()}] ✅ Loaded TFLite model successfully!")
                 return
             except Exception as e:
-                print(f"❌ TFLite loading failed: {e}")
+                print(f"[{now_str()}] ❌ TFLite loading failed: {e}")
                 
         # TFLite 로드 실패 시, 최소한의 기능은 유지 (TFLite 로드가 성공해야 작동)
         if not self.use_tflite:
-             print("⚠️ MoveNet TFLite model not found or failed to load. Pose estimation disabled.")
+             print(f"[{now_str()}] ⚠️ MoveNet TFLite model not found or failed to load. Pose estimation disabled.")
 
     
     def predict(self, frame, bboxes, scores=None):
@@ -157,7 +163,7 @@ class MoveNetPose:
         return poses
 
 # ============================================
-# 룰 기반 낙상 감지
+# 4. 룰 기반 낙상 감지 및 유틸리티 함수
 # ============================================
 def estimate_motion(prev_kp, curr_kp):
     """평균 키포인트 이동량 (걷기 인식용)"""
@@ -232,7 +238,7 @@ def get_body_aspect_ratio(keypoints):
 
 
 def detect_fall_rule_based(keypoints, prev_keypoints=None):
-    """향상된 룰 기반 상태 인식"""
+    """향상된 룰 기반 상태 인식 (기존 코드 유지)"""
     
     angle = calculate_body_angle(keypoints)
     ratio = get_body_aspect_ratio(keypoints)
@@ -272,11 +278,6 @@ def detect_fall_rule_based(keypoints, prev_keypoints=None):
     
     else: 
         return 'Unknown', conf, details
-
-
-# ============================================
-# 위험구역 함수
-# ============================================
 
 def get_location_details(bbox):
     """바운딩 박스를 이용해 중심 x, 하단 y 좌표를 반환"""
@@ -403,7 +404,6 @@ class SimpleTracker:
         
         return intersection / (union + 1e-6)
 
-
 # ============================================
 # YOLOv8 검출기
 # ============================================
@@ -462,9 +462,9 @@ def draw_skeleton(frame, keypoints):
 def on_connect(client, userdata, flags, rc):
     """MQTT 연결 콜백"""
     if rc == 0:
-        print("✅ MQTT Connected successfully.")
+        print(f"[{now_str()}] ✅ MQTT Connected successfully.")
     else:
-        print(f"❌ MQTT Connection failed with code {rc}")
+        print(f"[{now_str()}] ❌ MQTT Connection failed with code {rc}")
 
 def publish_mqtt_message(client, topic, payload):
     """JSON 메시지를 MQTT로 발행"""
@@ -472,9 +472,12 @@ def publish_mqtt_message(client, topic, payload):
         json_payload = json.dumps(payload, ensure_ascii=False)
         client.publish(topic, json_payload, qos=0)
         if DEBUG_MODE:
-            print(f"[MQTT SEND] {topic}: {json_payload}")
+            # 수정: RAW/ALERT에 따라 다른 로그 메시지 출력
+            msg_type = "ALERT" if "ALERT" in topic else "RAW"
+            level = payload.get("level", "N/A")
+            print(f"[{now_str()}] [MQTT SEND - {msg_type}:{level}] {topic}")
     except Exception as e:
-        print(f"[MQTT ERROR] Failed to publish to {topic}: {e}")
+        print(f"[{now_str()}] [MQTT ERROR] Failed to publish to {topic}: {e}")
 
 
 # ============================================
@@ -495,7 +498,7 @@ def main():
     print("- Pose: MoveNet " + args.model.title())
     print("- Detection: Rule-based")
     print("- Device: CPU")
-    print(f"- MQTT Broker: {MQTT_BROKER}:{MQTT_PORT}")
+    print(f"- MQTT Broker: {MQTT_BROKER}:{MQTT_PORT} / Module: {PE_MODULE}")
     print("="*60)
     
     # 1. 모델 로드
@@ -513,8 +516,7 @@ def main():
         mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
         mqtt_client.loop_start()
     except Exception as e:
-        print(f"❌ Failed to connect to MQTT broker: {e}")
-        # 계속 진행 (비디오 처리는 가능하도록)
+        print(f"[{now_str()}] ❌ Failed to connect to MQTT broker: {e}")
         
     # 4. 카메라
     print("\n2️⃣ Opening camera...")
@@ -525,14 +527,14 @@ def main():
     else:
         # 비디오 파일 경로
         cap = cv2.VideoCapture(cam_source)
+    cap = cv2.VideoCapture(int(args.camera) if args.camera.isdigit() else args.camera)
     
     if not cap.isOpened():
-        print("❌ Cannot open camera! Check source path or index.")
+        print(f"[{now_str()}] ❌ Cannot open camera! Check source path or index.")
         mqtt_client.loop_stop()
         return
-    
-    print("✅ Camera opened")
-    
+    print(f"[{now_str()}] ✅ Camera opened")
+
     # --- 비디오 저장 및 시각화 관련 코드 제거 ---
     writer = None
     # if args.save_out: # 비디오 저장 기능 제거 (GUI 의존성)
@@ -550,25 +552,24 @@ def main():
     fps_time = time.time()
     frame_count = 0
     
-    print("\n3️⃣ Starting detection... (Press 'q' to quit)\n")
+    print(f"[{now_str()}] 3️⃣ Starting detection... (Press Ctrl+C to quit)\n")
     
     while True:
         try:
             ret, frame = cap.read()
             if not ret:
-                print("End of stream or video.")
+                print(f"[{now_str()}] End of stream or video.")
                 break
             
             frame_count += 1
             h, w = frame.shape[:2]
+            current_time = time.time()
             
             # 위험구역 그리기 (GUI 제거로 더미 함수 호출)
             frame = draw_danger_area(frame)
             
             # 사람 검출
             bboxes, scores = detector.detect(frame)
-            
-            # 포즈 추정 및 트래킹 준비
             detections = []
             if len(bboxes) > 0:
                 poses = pose_model.predict(frame, bboxes, scores)
@@ -594,52 +595,51 @@ def main():
                 bbox = track['bbox']
                 keypoints_list = track['keypoints']
                 
-                if len(keypoints_list) < 1:
-                    continue
+                if len(keypoints_list) < 1: continue
                 
                 x1, y1, x2, y2 = bbox.astype(int)
                 center_x, bottom_y = get_location_details(bbox)
                 
-                # 1. 위험구역 체크 (ZONE)
+                # --- [A] 위험구역 체크 (ZONE) ---
                 in_zone = is_in_danger_zone(bbox, w, h)
                 
-                # A. ZONE TIMER 업데이트
                 if in_zone:
                     if track_id not in zone_timers:
                         zone_timers[track_id] = current_time
-                        alert_sent_zone[track_id] = False # 새로 진입 시 알림 상태 초기화
+                        alert_sent_zone[track_id] = False
                     
                     elapsed = current_time - zone_timers[track_id]
                     
-                    # B. ZONE ALERT (LEVEL 5)
+                    # 🚨 1. ZONE CRITICAL ALERT (임계치 초과)
                     if elapsed >= ZONE_ALERT_TIME and not alert_sent_zone.get(track_id, False):
                         # ALERT 메시지 발행
                         alert_payload = {
-                            "module": "VISION",
-                            "message": f"DANGER ZONE ALERT: Worker #{track_id} has been in the high-risk area for {elapsed:.1f}s. Location: ({center_x}, {bottom_y})",
-                            "level": 5,
-                            "details": [{"track_id": track_id, "object_type": "Person", "action": "InDangerZone", "location": f"Center: ({center_x}, {bottom_y})"}]
+                            "timestamp": now_str(),
+                            "module": PE_MODULE,
+                            "level": "CRITICAL", # 🚨 CRITICAL 레벨 적용
+                            "message": f"🚨 DANGER ZONE CRITICAL: Worker #{track_id} in high-risk area for {elapsed:.1f}s. Immediate removal required.",
+                            "details": [{"track_id": track_id, "action": "InDangerZoneCritical", "location": f"({center_x}, {bottom_y})"}]
                         }
                         publish_mqtt_message(mqtt_client, ALERT_TOPIC, alert_payload)
                         alert_sent_zone[track_id] = True
-                        print(f"[ALERT SENT] Zone alert for Worker #{track_id}")
+                        print(f"[{now_str()}] 🚨🚨 [CRITICAL ALERT SENT] Zone alert for Worker #{track_id} ({elapsed:.1f}s)")
+
+                    # ⚠️ 2. ZONE WARNING (경고 임계치 접근)
+                    elif elapsed >= ZONE_WARNING_TIME and not alert_sent_zone.get(track_id, False): 
+                        # CRITICAL 임계치 도달 전까지는 WARNING을 유지
+                        print(f"[{now_str()}] ⚠️ [WARNING] Worker #{track_id} in zone for {elapsed:.1f}s.")
                         
-                        zone_warnings.append((track_id, elapsed, 'danger'))
-                    elif elapsed >= ZONE_WARNING_TIME:
-                        zone_warnings.append((track_id, elapsed, 'warning'))
                 else:
-                    # C. ZONE LEAVE
                     if track_id in zone_timers:
                         del zone_timers[track_id]
-                        alert_sent_zone[track_id] = False # 존을 나갔으므로 알림 상태 초기화
+                        alert_sent_zone[track_id] = False
 
-                # 2. 낙상 감지 (FALL)
+                # --- [B] 낙상 감지 (FALL) ---
                 current_kp = keypoints_list[-1]
                 prev_kp = keypoints_list[-2] if len(keypoints_list) >= 2 else None
                 
                 action_name, confidence, details = detect_fall_rule_based(current_kp, prev_kp)
                 
-                # A. FALL COUNTER 업데이트
                 if track_id not in fall_counters:
                     fall_counters[track_id] = 0
                     alert_sent_fall[track_id] = False
@@ -652,25 +652,20 @@ def main():
                     fall_counters[track_id] = 0
                     alert_sent_fall[track_id] = False # 정상 상태로 돌아오면 알림 상태 초기화
                 
-                # B. FALL ALERT (LEVEL 5)
+                # 🚨 3. FALL CRITICAL ALERT (낙상 확정)
                 if fall_counters[track_id] >= FALL_FRAMES and not alert_sent_fall.get(track_id, False):
-                    # ALERT 메시지 발행
                     alert_payload = {
-                        "module": "VISION",
-                        "message": f"CRITICAL FALL DETECTED: Worker #{track_id} is {action_name.lower()} at location ({center_x}, {bottom_y}). Immediate assistance required.",
-                        "level": 5,
-                        "details": [{"track_id": track_id, "object_type": "Person", "action": action_name, "confidence": float(confidence), "location": f"Center: ({center_x}, {bottom_y})"}]
+                        "timestamp": now_str(),
+                        "module": PE_MODULE,
+                        "level": "CRITICAL", # 🚨 CRITICAL 레벨 적용
+                        "message": f"🚨 CRITICAL FALL DETECTED: Worker #{track_id} is {action_name.lower()} at location ({center_x}, {bottom_y}). Immediate assistance required.",
+                        "details": [{"track_id": track_id, "action": action_name, "confidence": float(confidence), "location": f"({center_x}, {bottom_y})"}]
                     }
                     publish_mqtt_message(mqtt_client, ALERT_TOPIC, alert_payload)
                     alert_sent_fall[track_id] = True
-                    print(f"[ALERT SENT] Fall alert for Worker #{track_id}")
+                    print(f"[{now_str()}] 🚨🚨 [CRITICAL ALERT SENT] Fall alert for Worker #{track_id} @ {current_time:.2f}")
 
-                # 3. 시각화 (제거) 및 RAW 데이터 기록
-                
-                # 시각화 관련 변수 (GUI 제거로 여기서 사용하지 않음)
-                # action_display, clr 등...
-                
-                # RAW 데이터 리스트에 추가
+                # 4. RAW 데이터 기록
                 raw_detections_list.append({
                     "track_id": int(track_id),
                     "object_type": "Person",
@@ -684,25 +679,20 @@ def main():
             # 4. RAW 데이터 발행 (주기적으로)
             if frame_count % RAW_PUBLISH_INTERVAL == 0 and is_person_detected:
                 raw_payload = {
-                    "module": "VISION",
+                    "timestamp": now_str(),
+                    "module": PE_MODULE, # PE 모듈 명시
+                    "level": "INFO", # 🚨 INFO 레벨 추가 (정상적인 데이터 흐름)
                     "detections": raw_detections_list,
                     "person_detected": is_person_detected
                 }
                 publish_mqtt_message(mqtt_client, RAW_TOPIC, raw_payload)
+                # ⭐️ 시연용 로그: RAW 데이터 발행 ⭐️
+                end_time = time.time()
+                fps = 1.0 / (end_time - fps_time + 1e-6)
+                fps_time = end_time
+                print(f"[{now_str()}] [PUB-PE-RAW:INFO] ✅ RAW data sent (Tracks: {len(current_tracks)}) (FPS: {fps:.1f})")
 
-
-            # 위험구역 경고 표시 (GUI 제거로 더미 함수 호출)
-            if zone_warnings:
-                frame = draw_zone_warnings(frame, zone_warnings)
-            
-            # FPS 표시 (로그로 대체)
-            fps = 1.0 / (time.time() - fps_time + 1e-6)
-            fps_time = time.time()
-            if DEBUG_MODE:
-                if frame_count % 30 == 0: # 30프레임마다 FPS 로깅
-                    print(f"[FPS] Frame: {frame_count}, FPS: {fps:.1f}")
-            
-            # --- 화면 표시 및 종료 로직 제거 ---
+                # --- 화면 표시 및 종료 로직 제거 ---
             # cv2.imshow('Fall Detection + Danger Zone (MQTT PE Client)', frame)
             
             # # 비디오 저장 (제거)
@@ -714,19 +704,19 @@ def main():
             #     break
             # --- 제거 끝 ---
 
-            # 짧은 대기 시간을 주어 CPU 사용량을 낮추고 다른 작업이 실행될 수 있도록 합니다.
+            # 짧은 대기 시간을 주어 CPU 사용량을 낮춥니다.
             time.sleep(0.01) # 약 100 FPS (비디오 처리 시간 제외)
 
         except KeyboardInterrupt:
-            print("\n[INFO System] Measurement stopped by user (Ctrl+C).")
+            print(f"\n[{now_str()}] [INFO System] Measurement stopped by user (Ctrl+C).")
             break
         except Exception as e:
-            print(f"\n[ERROR System] An unexpected error occurred: {e}")
+            print(f"\n[{now_str()}] [ERROR System] An unexpected error occurred: {e}")
             break
     
     # 정리
-    cap.release()
-    # cv2.destroyAllWindows() # GUI 관련 함수 제거
+    if cap.isOpened():
+        cap.release()
     
     print("\n" + "="*60)
     print("Program terminated. Closing MQTT connection.")
@@ -736,4 +726,6 @@ def main():
 
 
 if __name__ == '__main__':
+    # TensorFlow 로그를 억제하여 터미널 출력을 깔끔하게 만듭니다.
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' 
     main()

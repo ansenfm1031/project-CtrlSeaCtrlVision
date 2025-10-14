@@ -1,7 +1,7 @@
 import paho.mqtt.client as mqtt
 import cv2
 import numpy as np
-from openvino.runtime import Core # OpenVINO 런타임 Core로 명시적으로 변경
+from openvino.runtime import Core
 import torch
 import torch.nn as nn
 from PIL import Image
@@ -17,9 +17,14 @@ from datetime import datetime, timezone
 # ====================================================
 
 # MQTT 설정
-BROKER = "10.10.14.73" # 브로커 주소를 사용자의 환경에 맞게 설정하세요
+BROKER = "10.10.14.73"
 PORT = 1883
 TOPIC_BASE = "project/vision" # 토픽 접두사
+
+# AD 모듈 명확히 지정 및 토픽 분리
+AD_MODULE = "AD"
+RAW_TOPIC = TOPIC_BASE + "/" + AD_MODULE + "/RAW"
+ALERT_TOPIC = TOPIC_BASE + "/" + AD_MODULE + "/ALERT" # 경고 토픽도 AD 전용으로 분리
 
 def now_str():
     """ISO 8601 형식의 현재 UTC 시각을 반환합니다."""
@@ -35,7 +40,7 @@ det_bin = "models/Detection.bin"
 cls_xml = "models/Classification.xml"
 cls_bin = "models/Classification.bin"
 
-DEPLOYMENT_FILE = "models/deployed_obstacle_detector.pt"  # PyTorch Anomaly Detection TorchScript 모델
+DEPLOYMENT_FILE = "models/deployed_obstacle_detector.pt"
 
 ALL_MODEL_PATHS = [det_xml, det_bin, cls_xml, cls_bin, DEPLOYMENT_FILE]
 for path in ALL_MODEL_PATHS:
@@ -164,7 +169,6 @@ def initialize_vision():
             (0, cv2.CAP_ANY),  (1, cv2.CAP_ANY), (2, cv2.CAP_ANY),  # ANY 백엔드 시도 
             (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0), (9, 0) # 더 넓은 인덱스 범위 시도
         ]
-        # --------------------------------------------------------
         
         cap = None
         for index, api_preference in capture_attempts:
@@ -174,7 +178,7 @@ def initialize_vision():
                 cap = cv2.VideoCapture(index)
 
             if cap.isOpened():
-                # **해상도 및 속성 설정:** 안정적인 캡처를 위해 해상도를 명시적으로 설정합니다.
+                # 해상도 및 속성 설정: 안정적인 캡처
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                 cap.set(cv2.CAP_PROP_FPS, 30)
@@ -203,6 +207,8 @@ def run_inference_and_publish(client):
     4. MQTT로 결과 발행
     """
     global last_frame_boxes
+    
+    start_time = time.time() # 시연용: FPS 측정 시작
     
     # 1. 프레임 캡처
     ret, frame = cap.read()
@@ -262,6 +268,7 @@ def run_inference_and_publish(client):
     # --------------------------
     detections = []
     anomaly_detected = False
+    critical_ship_detected = False # 🚨 CRITICAL 충돌 위험을 유발할 수 있는 배 감지
     
     for (x, y, w, h) in smoothed_boxes:
         # Classification을 위한 영역 추출
@@ -277,13 +284,17 @@ def run_inference_and_publish(client):
         class_id = int(np.argmax(cls_result))
         score_cls = float(np.max(cls_result))
         label_name = class_names[class_id]
+        
+        # 🚨 일반 'Ship'을 감지했을 때 충돌 위험으로 판단
+        if label_name in ['Ship']: 
+             # 실제 충돌 위험 로직 (예: 객체 크기, 위치, 속도)이 없으므로 임시로 'Ship' 감지 시 CRITICAL로 설정합니다.
+             critical_ship_detected = True
 
         # Anomaly Detection (PyTorch) - 탐지된 객체 영역에만 적용
         pil_crop = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
         input_tensor = inference_transforms(pil_crop).unsqueeze(0).to('cpu')
         
         with torch.no_grad():
-            # anomaly_score는 TorchScript 모델의 출력에 따라 수정이 필요할 수 있습니다.
             anomaly_score = deployed_model(input_tensor).item() 
         
         is_anomaly = anomaly_score > OPTIMAL_THRESHOLD
@@ -303,37 +314,52 @@ def run_inference_and_publish(client):
     # --------------------------
     
     # 5-1. 기본 RAW 데이터 (모든 탐지 결과 포함)
-    # 서버의 save_vision_data(action, payload_dict) 요구사항을 맞추기 위해 topic_base 및 action 필드를 추가합니다.
     raw_data = {
         "timestamp": now_str(),
+        "module": AD_MODULE, # 🚨 수정: 모듈 이름 명시
+        "level": "INFO",     # 🚨 수정: INFO 레벨 명시
         "detections": detections,
         "total_count": len(detections),
         "anomaly_count": sum(1 for d in detections if d['anomaly']),
-        "topic_base": TOPIC_BASE, # 서버 요구사항 충족
-        "action": "RAW"           # 서버 요구사항 충족
     }
     raw_payload = json.dumps(raw_data)
-    client.publish(f"{TOPIC_BASE}/RAW", raw_payload, qos=0)
-    print(f"[{now_str()}] INFO PUB :: {TOPIC_BASE}/RAW → Sent {len(detections)} detections.")
+    client.publish(RAW_TOPIC, raw_payload, qos=0)
+    # 시연용 로그: RAW 데이터 발행 
+    end_time = time.time()
+    fps = 1.0 / (end_time - start_time + 1e-6)
+    print(f"[{now_str()}] INFO PUB :: {RAW_TOPIC} → Sent {len(detections)} detections. (FPS: {fps:.1f})")
+
 
     # 5-2. 경고 이벤트 (Anomaly나 중요 객체 감지 시)
-    if anomaly_detected or any(d['object_type'] in ['Ship', 'Animal'] for d in detections):
+    if anomaly_detected or critical_ship_detected:
         
-        alert_summary = f"위험 감지: 총 {len(detections)}개 객체 중 {sum(1 for d in detections if d['anomaly'])}개가 이상 징후."
-        
+        # 🚨 레벨 및 메시지 결정 로직 🚨
+        if anomaly_detected or critical_ship_detected:
+            # 이상 징후나 충돌 위험(Ship 감지)이 있으면 CRITICAL
+            alert_level = "CRITICAL"
+            alert_summary = f"🚨 긴급 충돌/이상 징후! 총 {len(detections)}개 객체 중 {sum(1 for d in detections if d['anomaly'])}개 이상 징후."
+            
+        elif any(d['object_type'] in ['Animal', 'Reef'] for d in detections):
+            # Animal 또는 Reef는 항해에 주의가 필요하므로 WARNING
+            alert_level = "WARNING"
+            alert_summary = f"⚠️ 항해 주의! {', '.join(set(d['object_type'] for d in detections if d['object_type'] in ['Animal', 'Reef']))} 감지됨."
+        else:
+            return # 경고 발행 필요 없음
+
         alert_data = {
-            "level": 5 if anomaly_detected else 3,
+            "timestamp": now_str(),
+            "module": AD_MODULE, # 🚨 수정: 모듈 이름 명시
+            "level": alert_level, # 🚨 수정: 결정된 레벨 적용
             "message": alert_summary,
-            "details": [d for d in detections if d['anomaly'] or d['object_type'] in ['Ship', 'Animal']],
-            "topic_base": TOPIC_BASE, # 서버 요구사항 충족
-            "action": "ALERT"         # 서버 요구사항 충족
+            "details": [d for d in detections if d['anomaly'] or d['object_type'] in ['Ship', 'Animal', 'Reef']],
         }
         alert_payload = json.dumps(alert_data)
-        client.publish(f"{TOPIC_BASE}/ALERT", alert_payload, qos=1) # QOS 1로 중요 경고 전송
-        print(f"[{now_str()}] ⚠️ ALERT PUB :: {TOPIC_BASE}/ALERT → {alert_summary}")
+        client.publish(ALERT_TOPIC, alert_payload, qos=1)
+        # 시연용 로그: 경고 발행
+        print(f"[{now_str()}] 📢 {alert_level} PUB :: {ALERT_TOPIC} → {alert_summary}")
         
     
-    time.sleep(0.5) # 0.5초당 1회 추론 및 발행 (약 2 FPS)
+    time.sleep(0.01) # 0.01초 대기 (CPU 점유율 관리)
 
 
 # ====================================================
@@ -346,13 +372,19 @@ def main():
 
     # 2. MQTT 클라이언트 생성 및 연결
     client = mqtt.Client()
+    def on_connect(client, userdata, flags, rc):
+        if rc == 0:
+            print(f"[{now_str()}] INFO MQTT :: Client connected successfully (RC: {rc})")
+        else:
+            print(f"[{now_str()}] ❌ CRITICAL: MQTT Connection failed (RC: {rc})")
+            sys.exit(1)
+            
+    client.on_connect = on_connect # 콜백 설정
+    
     try:
-        # DeprecationWarning 제거: Callback API version 1 is deprecated, update to latest version
-        # paho-mqtt의 최신 버전은 context managers나 loop_forever()를 권장하지만, 
-        # 기존 코드 스타일 유지를 위해 warning은 무시하고 진행합니다.
         client.connect(BROKER, PORT, 60)
         client.loop_start() 
-        print(f"[{now_str()}] INFO MQTT :: Client connected to {BROKER}:{PORT}")
+        print(f"[{now_str()}] INFO MQTT :: Client attempting connection to {BROKER}:{PORT}")
     except Exception as e:
         print(f"[{now_str()}] ❌ CRITICAL: MQTT 연결 실패: {e}")
         sys.exit(1)
@@ -365,7 +397,7 @@ def main():
             run_inference_and_publish(client)
             
     except KeyboardInterrupt:
-        print(f"\n[{now_str()}] INFO System :: Vision client stopped by user.")
+        print(f"\n[{now_str()}] INFO System :: Vision client stopped by user (Ctrl+C).")
     except Exception as e:
         print(f"\n[{now_str()}] ❌ ERROR System :: An unexpected error occurred: {e}")
     finally:
@@ -378,4 +410,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

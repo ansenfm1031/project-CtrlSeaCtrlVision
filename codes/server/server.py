@@ -17,7 +17,7 @@ DB_NAME = "marine_system"
 # === MQTT 설정 ===
 BROKER = "0.0.0.0"
 PORT = 1883
-TOPIC_BASE = "project/"   # 모듈 로그 접두사 (예: project/VISION/EVT)
+TOPIC_BASE = "project/"   # 모듈 로그 접두사 (예: project/IMU/RAW)
 COMMAND_TOPIC = "command/" # 서버 명령 접두사 (예: command/summary)
 
 # === OpenAI 클라이언트 설정 ===
@@ -43,14 +43,13 @@ def get_db_connection():
         print(f"[DB-ERROR] 연결 실패: {e}")
         return None
     
-# === 키=값; 형태의 문자열을 딕셔너리로 파싱 (함수 내용 그대로 사용) ===
+# === 키=값; 형태의 문자열을 딕셔너리로 파싱 ===
 def parse_payload_to_dict(payload: str) -> dict:
-    """'키=값;키=값' 형태의 문자열을 딕셔너리로 파싱합니다."""
-    # 클라이언트가 JSON을 보낸다면 JSON 파싱을 시도합니다.
+    """'키=값;키=값' 형태의 문자열을 딕셔너리로 파싱합니다. JSON 우선 파싱."""
     try:
         return json.loads(payload)
     except json.JSONDecodeError:
-        # JSON이 아니면 기존 키=값; 로직을 유지합니다. (혹시 모를 다른 클라이언트 대응)
+        # JSON이 아니면 기존 키=값; 로직을 유지합니다. 
         data = {}
         if "|" in payload:
             payload = payload.split("|", 1)[-1].strip()
@@ -80,7 +79,7 @@ CURSOR = DB_CONN.cursor()
 
 # === DB 저장 함수 (DB_CONN, CURSOR 사용) ===
 def save_event_log(module: str, action: str, full_payload: str):
-    """events 테이블에 일반 로그, STT, IMU 위험 로그를 저장"""
+    """events 테이블에 일반 로그, STT, 모든 CRITICAL/WARNING 로그를 저장"""
     try:
         now = now_str()
         sql = "INSERT INTO events (module, action, payload, ts) VALUES (%s, %s, %s, %s)"
@@ -90,13 +89,16 @@ def save_event_log(module: str, action: str, full_payload: str):
     except Exception as e:
         print(f"[{now}] [DB-ERROR] events 테이블 저장 실패: {e}")
 
+# 수정: 'module' 인수를 사용하여 AD/PE/VISION을 명확히 구분
 def save_vision_data(module: str, action: str, payload_dict: dict):
-    """vision_data 테이블에 VISION/POSE 결과를 저장"""
+    """vision_data 테이블에 VISION/AD/PE 결과를 저장합니다."""
     try:
         now = now_str()
         
-        object_type = action 
-        risk_level = int(payload_dict.get('level', 0) or payload_dict.get('risk', 0))
+        # 'action'은 보통 'RAW'이지만, object_type으로 사용될 수 있음.
+        object_type = payload_dict.get('type') or action 
+        # 클라이언트 JSON payload에 'level' 또는 'risk' 키가 있다고 가정
+        risk_level = int(payload_dict.get('level', 0) or payload_dict.get('risk', 0)) 
         description = payload_dict.get('posture') or payload_dict.get('zone') or object_type
         # json.dumps() 사용 시 한글이 깨지지 않도록 ensure_ascii=False 옵션을 추가했습니다.
         detail_json = json.dumps(payload_dict, ensure_ascii=False) 
@@ -106,6 +108,7 @@ def save_vision_data(module: str, action: str, payload_dict: dict):
             (ts, module, object_type, risk_level, description, detail_json) 
             VALUES (%s, %s, %s, %s, %s, %s)
         """
+        # module 인수로 받은 값을 사용 (AD, PE, VISION 중 하나)
         CURSOR.execute(sql, (now, module, object_type, risk_level, description, detail_json))
         DB_CONN.commit()
         print(f"[{now}] [DB-OK] Data saved to vision_data: ({module}/{object_type}) Risk:{risk_level}")
@@ -123,12 +126,12 @@ def save_imu_raw_data(payload_dict: dict):
         yaw = float(payload_dict.get('yaw', 0.0))
         
         sql = "INSERT INTO imu_data (ts, pitch, roll, yaw) VALUES (%s, %s, %s, %s)"
-        # 순서를 Pitch, Roll, Yaw 순으로 맞추는 것이 좋습니다 (DB 테이블 순서에 따라)
+        # 순서를 DB 테이블 순서에 따라 Pitch, Roll, Yaw 순으로 맞춥니다.
         CURSOR.execute(sql, (now, pitch, roll, yaw)) 
         DB_CONN.commit()
         print(f"[{now}] [DB-OK] Raw data saved to imu_data: R:{roll:.2f} P:{pitch:.2f} Y:{yaw:.2f}")
     except Exception as e:
-        print(f"[{now}] [DB-ERROR] imu_data 테이블 저장 실패: {e}")
+        print(f"[DB-ERROR] imu_data 테이블 저장 실패: {e}")
 
 # === LLM/TTS 로직 함수 (DB_CONN, CURSOR 사용) ===
 
@@ -230,99 +233,52 @@ def process_and_save_data(msg):
     # 1. 토픽 파싱
     topic = msg.topic
     payload = msg.payload.decode('utf-8')
-    # parse_payload_to_dict 함수는 JSON 파싱을 수행한다고 가정
     payload_dict = parse_payload_to_dict(payload)
     
     # 토픽에서 모듈/액션 추출 (예: project/IMU/RAW -> module=IMU, action=RAW)
-    parts = topic.split('/') # ['project', 'vision', 'RAW'] 또는 ['project', 'IMU', 'RAW']
+    parts = topic.split('/') 
     
     # 토픽이 최소한 3단계 (project/module/action) 이상이어야 함
     if len(parts) < 3:
         print(f"[WARN] Skipping short topic: {topic}")
         return
 
-    topic_base = parts[0] + '/' + parts[1] # 'project/vision' 또는 'project/IMU'
-    module = parts[1].upper() # 'VISION' 또는 'IMU'
+    module = parts[1].upper() # 'VISION', 'IMU', 'AD', 'PE'
     action = parts[2].upper() # 'RAW' 또는 'ALERT' 등
-    
-    # 디버깅 및 서버 요구사항 맞추기
-    
-    # Vision 토픽일 경우 (기존 로직)
-    if module == "VISION":
-        # 🟢 VISION 모듈: save_vision_data 함수에 필수 인수 3개를 전달합니다.
-        try:
-            # 파싱된 topic_base ('project/vision'), action ('RAW'), payload_dict를 전달합니다.
-            save_vision_data(topic_base, action, payload_dict) 
-            
-        except TypeError as e:
-            # save_vision_data 호출 시 TypeError가 발생하면, 인수가 여전히 틀렸다는 뜻입니다.
-            print(f"[CRITICAL ERROR] save_vision_data 호출 실패: {e}. server.py의 함수 정의를 확인하세요.")
-            
-    # IMU 토픽일 경우 (추가된 로직)
-    elif module == "IMU":
-        # 🟢 IMU 모듈: save_imu_data 함수에 필수 인수 3개를 전달합니다.
-        # save_imu_data(topic_base, action, payload_dict) 시그니처를 가정합니다.
-        try:
-            # 파싱된 topic_base ('project/IMU'), action ('RAW'), payload_dict를 전달합니다.
-            # 'save_imu_data' 함수가 server.py에 정의되어 있다고 가정합니다.
-            save_imu_data(topic_base, action, payload_dict)
-            
-        except TypeError as e:
-            # save_imu_data 호출 시 TypeError가 발생하면, 인수가 여전히 틀렸다는 뜻입니다.
-            print(f"[CRITICAL ERROR] save_imu_data 호출 실패: {e}. server.py의 함수 정의를 확인하세요.")
-            
-    # 기타 모듈이 추가될 경우 elif를 사용하여 확장 가능
-            
-    # ... (다른 모듈 처리 로직이 있었다면 이 아래에 위치)
-    
-    return
 
     # =======================================================
-    # 2. 데이터 라우팅 및 저장 (수정 및 확장 필요)
+    # 2. 데이터 라우팅 및 저장 (ALERT 우선 처리)
     # =======================================================
     
-    # IMU 원시 데이터 (IMU/RAW) -> imu_data 저장 및 이벤트 감지
-    if module == "IMU" and action == "RAW": 
-        
-        # 2-1. 원시 데이터 저장 (imu_data)
-        save_imu_raw_data(payload_dict)
-        print(f"[DB] Saved IMU RAW data to imu_data table.")
-        
-        # 2-2. 이벤트 감지 및 생성 (events)
-        roll_angle = payload_dict.get('roll', 0.0)
-        RISK_THRESHOLD = 20.0 # 임계값 설정 (예: 20도)
+    # 2-1. 🚨 ALERT 토픽 처리 (CRITICAL/WARNING 레벨)
+    if action == "ALERT":
+        # 모든 모듈의 ALERT는 중요 이벤트로 간주하여 events 테이블에 저장합니다.
+        # 클라이언트에서 이미 level, message를 포함한 JSON으로 보내므로 payload 전체를 저장합니다.
+        save_event_log(module, action, payload)
+        print(f"[{now_str()}] [DB] ALERT log saved to events: {module}/{action}")
+        return # ALERT 처리 후 종료
 
-        if abs(roll_angle) > RISK_THRESHOLD:
-            # Roll 각도가 위험 임계값을 초과했을 때만 events에 기록
-            event_type = "TILT_ALERT"
-            event_message = f"심한 기울기 감지: Roll {roll_angle:.2f}도 초과."
+    # 2-2. 🟢 RAW 토픽 처리 (INFO 레벨 - 연속 데이터)
+    elif action == "RAW":
+        if module == "IMU":
+            # IMU RAW 데이터는 imu_data 테이블에 저장
+            save_imu_raw_data(payload_dict)
+            print(f"[{now_str()}] [DB] Saved IMU RAW data to imu_data table.")
+        
+        # VISION, AD, PE RAW 데이터는 vision_data 테이블에 통합 저장
+        elif module in ["VISION", "AD", "PE"]:
+            save_vision_data(module, action, payload_dict)
+            print(f"[{now_str()}] [DB] Saved {module} RAW data to vision_data table.")
             
-            # save_event_log 함수는 events 테이블에 저장해야 합니다.
-            save_event_log("IMU", event_type, event_message)
-            print(f"[EVENT] RISK ALERT generated for Roll: {roll_angle:.2f}")
-
-    # VISION 원시 데이터 (VISION/RAW) -> vision_data 저장 및 이벤트 감지
-    elif module == "VISION" and action == "RAW":
+        else:
+            print(f"[{now_str()}] [WARN] Unknown RAW module: {module}. Data discarded.")
+        return # RAW 처리 후 종료
         
-        # 2-3. 원시 데이터 저장 (vision_data)
-        save_vision_data(payload_dict)
-        print(f"[DB] Saved VISION RAW data to vision_data table.")
-        
-        # 2-4. 이벤트 감지 및 생성 (events)
-        # 예시: payload_dict 안에 'detected_person' 키가 있고 값이 True일 경우
-        is_person_detected = payload_dict.get('person_detected', False) 
-        
-        if is_person_detected:
-            event_type = "INTRUSION_ALERT"
-            event_message = "배 앞 갑판에 사람 접근 감지됨."
-            save_event_log("VISION", event_type, event_message)
-            print(f"[EVENT] Intruder Alert generated.")
-
-    # 그 외 일반 시스템/STT 이벤트 -> events 테이블
+    # 2-3. 기타 일반 시스템/STT 이벤트 (events 테이블)
     else: 
         # STT, DB 로그, 기타 관리 목적의 로그는 events에 바로 저장
         save_event_log(module, action, payload)
-        print(f"[LOG] Saved general log to events table. Module: {module}")
+        print(f"[{now_str()}] [LOG] Saved general log to events table. Module: {module}")
         
 # === [MQTT 콜백] 명령어 처리 후 데이터 라우팅을 'process_and_save_data'로 위임하는 진입점. ===
 def on_message(client, userdata, msg):
