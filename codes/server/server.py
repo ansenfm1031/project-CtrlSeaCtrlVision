@@ -81,6 +81,61 @@ if DB_CONN is None:
     sys.exit(1)
 CURSOR = DB_CONN.cursor()
 
+def check_microphone():
+    """마이크가 시스템에 연결되어 있고 소리를 감지하는지 확인합니다."""
+    r = sr.Recognizer()
+    
+    print("\n--- 🎙️ 마이크 테스트 시작 ---")
+    
+    try:
+        with sr.Microphone(sample_rate=16000) as source:
+            print("1. 마이크 연결 확인: 성공 (마이크 장치 접근 가능)")
+            print("2. 주변 소음 캘리브레이션 중 (1초)...")
+            r.adjust_for_ambient_noise(source, duration=1.0)
+            print("3. 마이크 활성화 완료. 5초 동안 말해보세요.")
+            
+            try:
+                audio = r.listen(source, timeout=5, phrase_time_limit=5)
+                if audio and len(audio.frame_data) > 0:
+                    print("✅ 마이크 테스트 성공: 소리 감지 및 입력 데이터 확보 완료.")
+                    return True
+                else:
+                    print("⚠️ 마이크 테스트 경고: 마이크가 연결되었으나, 5초 동안 유효한 소리를 감지하지 못했습니다.")
+                    return False
+            
+            except sr.WaitTimeoutError:
+                print("⚠️ 마이크 테스트 경고: 마이크가 연결되었으나, 5초 동안 유효한 소리를 감지하지 못했습니다.")
+                return False
+                
+    except Exception as e:
+        print(f"❌ 마이크 테스트 실패: 오류 발생 ({e}). 'pyaudio'가 설치되었는지 확인하세요.")
+        return False
+
+def check_speaker():
+    """gTTS를 통해 짧은 음성을 생성하고 mpv로 재생하여 스피커 연결을 확인합니다."""
+    TEST_FILENAME = "test_audio_output.mp3"
+    TEST_TEXT = "테스트를 위해 스피커 출력을 확인합니다."
+    
+    print("\n--- 🔊 스피커 테스트 시작 ---")
+    
+    try:
+        tts = gTTS(text=TEST_TEXT, lang="ko")
+        tts.save(TEST_FILENAME)
+        print(f"1. TTS 파일 생성 완료: {TEST_FILENAME}")
+        
+        print("2. 스피커로 테스트 음성 재생 중...")
+        os.system(f"mpv --no-terminal --volume=100 {TEST_FILENAME}") 
+        
+        print("✅ 스피커 테스트 성공: 음성 출력을 확인했습니다.")
+        return True
+
+    except Exception as e:
+        print(f"❌ 스피커 테스트 실패: 음성 파일 생성 또는 재생 오류. 'gTTS' 또는 'mpv' 설치를 확인하세요. ({e})")
+        return False
+    finally:
+        if os.path.exists(TEST_FILENAME):
+            os.remove(TEST_FILENAME)
+
 # === DB 저장 함수 (DB_CONN, CURSOR 사용) ===
 def save_event_log(module: str, action: str, full_payload: str):
     """events 테이블에 일반 로그, STT, 모든 CRITICAL/WARNING 로그를 저장"""
