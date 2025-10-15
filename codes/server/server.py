@@ -602,7 +602,7 @@ def process_and_save_data(msg):
 
         # 3️⃣ 긴급 알람 TTS 재생
         print(f"[{now}] [TTS] 긴급 알람 발화: {module} {action}")
-        play_tts(f"긴급 알람 발생: {module} {action}")
+        text_to_speech(f"긴급 알람 발생: {module} {action}")
         return
 
     # 2-2. 🟢 RAW 토픽 처리 (INFO 레벨 - 연속 데이터)
