@@ -58,6 +58,33 @@ def get_db_connection():
         print(f"[DB-ERROR] 연결 실패: {e}")
         return None
     
+# DB 연결 확인 및 재연결 함수
+def ensure_db_connection():
+    """DB 연결 확인 및 재연결 후 글로벌 CURSOR를 갱신합니다."""
+    global DB_CONN, CURSOR
+    try:
+        # 연결이 끊어졌는지 확인하고, 끊겼다면 자동 재연결 시도
+        DB_CONN.ping(reconnect=True)
+    except Exception as e:
+        print(f"[{now_str()}] [DB-WARN] 기존 연결 ping 실패. 재연결 시도.")
+        # ping 재연결마저 실패했거나 연결 객체 자체가 문제가 있을 경우, 
+        # get_db_connection을 통해 완전히 새로운 연결을 시도
+        new_conn = get_db_connection()
+        if new_conn:
+            DB_CONN = new_conn
+        else:
+            print(f"[{now_str()}] [DB-CRITICAL] DB 재연결 최종 실패.")
+            raise # 치명적 오류 발생
+
+    # 🚨 DB_CONN이 재연결되었을 수 있으므로, CURSOR를 반드시 갱신해야 합니다.
+    try:
+        if CURSOR and CURSOR.connection != DB_CONN:
+             CURSOR.close()
+        CURSOR = DB_CONN.cursor()
+    except Exception:
+        # CURSOR가 아직 초기화되지 않았거나 닫혔다면, 새로 생성
+        CURSOR = DB_CONN.cursor()
+    
 # === 키=값; 형태의 문자열을 딕셔너리로 파싱 ===
 def parse_payload_to_dict(payload: str) -> dict:
     """'키=값;키=값' 형태의 문자열을 딕셔너리로 파싱합니다. JSON 우선 파싱."""
@@ -206,6 +233,8 @@ def check_speaker():
 def save_event_log(module: str, action: str, full_payload: str):
     """events 테이블에 일반 로그, STT, 모든 CRITICAL/WARNING 로그를 저장"""
     try:
+        ensure_db_connection()
+
         now = now_str()
         sql = "INSERT INTO events (module, action, payload, ts) VALUES (%s, %s, %s, %s)"
         CURSOR.execute(sql, (module, action, full_payload, now))
@@ -220,6 +249,8 @@ def save_vision_data(module: str, action: str, payload_dict: dict):
     'detections' 리스트를 우선 사용하고, 없으면 'details'를 fallback으로 시도합니다.
     """
     try:
+        ensure_db_connection()
+
         now = now_str()
         # payload 안의 detections 리스트 우선, 없으면 details로 대체
         detections = payload_dict.get('detections')
@@ -262,18 +293,20 @@ def save_vision_data(module: str, action: str, payload_dict: dict):
         print(f"[{now}] [DB-OK] Saved {records_inserted} records to vision_data from {module} ({action}).")
 
     except Exception as e:
-        # 안전한 예외 메시지 출력: payload snippet을 문자열로 변환 후 길이 제한
-        snippet = ""
         try:
-            snippet = json.dumps(payload_dict)[:200]
+            DB_CONN.rollback()
+        except pymysql.err.InterfaceError:
+             pass 
         except Exception:
-            snippet = str(payload_dict)[:200]
-        print(f"[{now}] [DB-ERROR] vision_data 저장 실패: {e}. Payload snippet: {snippet}")
-        DB_CONN.rollback()
+             pass
+             
+        print(f"[{now}] [DB-ERROR] events 테이블 저장 실패: {e}")
 
 def save_imu_raw_data(payload_dict: dict):
     """imu_data 테이블에 연속적인 Pitch/Roll/Yaw 데이터를 저장"""
     try:
+        ensure_db_connection()
+        
         now = now_str()
         
         # 클라이언트가 보낸 roll, pitch, yaw 키를 사용합니다.
