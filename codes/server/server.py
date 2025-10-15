@@ -211,60 +211,60 @@ def save_event_log(module: str, action: str, full_payload: str):
 # 'module' 인수를 사용하여 AD/PE/VISION을 명확히 구분
 def save_vision_data(module: str, action: str, payload_dict: dict):
     """
-    vision_data 테이블에 VISION/AD/PE 결과를 저장합니다. 
-    'detections' 리스트를 순회하며 각 탐지 객체별로 행을 삽입합니다.
+    vision_data 테이블에 VISION/AD/PE 결과를 저장합니다.
+    'detections' 리스트를 우선 사용하고, 없으면 'details'를 fallback으로 시도합니다.
     """
     try:
         now = now_str()
-        # 1. RAW 데이터의 핵심인 'detections' 리스트를 추출합니다.
-        detections = payload_dict.get('detections', []) 
-        
+        # payload 안의 detections 리스트 우선, 없으면 details로 대체
+        detections = payload_dict.get('detections')
+        if detections is None:
+            detections = payload_dict.get('details', [])
+
         if not detections:
-            print(f"[{now}] [WARN] No detections found in {module} RAW payload. Skipping DB insert.")
+            print(f"[{now}] [WARN] No detections/details found in {module} payload (action={action}). Skipping DB insert.")
             return
 
-        # 'vision_data' 테이블 스키마 가정: 
-        # (ts, module, object_type, risk_level, description, detail_json, confidence, track_id)
         sql = """
-            INSERT INTO vision_data 
-            (ts, module, object_type, risk_level, description, detail_json, confidence, track_id) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO vision_data
+            (ts, module, object_type, risk_level, description, detail_json)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """
-        
+
         records_inserted = 0
-        # 2. 🚨핵심 수정🚨: detections 리스트를 순회하며 각 객체(탐지 결과)별로 DB에 행을 추가합니다.
         for detection in detections:
-            # 개별 탐지 객체에서 데이터 추출
-            object_type = detection.get('object_type') or detection.get('type') or 'UNKNOWN'
-            # risk_level은 detection 내부에 있거나, 없으면 0
-            risk_level = int(detection.get('level', 0) or detection.get('risk', 0))
-            description = detection.get('action') or detection.get('posture') or detection.get('zone') or 'N/A'
-            confidence = detection.get('confidence', 0.0)
-            track_id = detection.get('track_id')
-            
-            # 개별 detection 객체만 JSON 문자열로 저장
-            detail_json = json.dumps(detection, ensure_ascii=False) 
-            
-            # 3. 각 탐지 객체별로 DB에 한 행씩 삽입
+            # 안전하게 키들을 추출 (여러 포맷 대비)
+            object_type = detection.get('object_type') or detection.get('object') or detection.get('type') or 'UNKNOWN'
+            # risk_level may be under various keys
+            risk_level = int(detection.get('risk_level', detection.get('level', detection.get('risk', 0))) or 0)
+            description = detection.get('description') or detection.get('action') or detection.get('posture') or detection.get('zone') or ''
+            confidence = float(detection.get('confidence', detection.get('score', 0.0) or 0.0))
+            track_id = detection.get('track_id') or detection.get('id')
+
+            detail_json = json.dumps(detection, ensure_ascii=False)
+
             CURSOR.execute(sql, (
-                now, 
-                module, 
-                object_type, 
-                risk_level, 
-                description, 
+                now,
+                module,
+                object_type,
+                risk_level,
+                description,
                 detail_json,
-                confidence,
-                track_id
             ))
             records_inserted += 1
 
         DB_CONN.commit()
-        print(f"[{now}] [DB-OK] Saved {records_inserted} records to vision_data from {module} RAW.")
-        
+        print(f"[{now}] [DB-OK] Saved {records_inserted} records to vision_data from {module} ({action}).")
+
     except Exception as e:
-        # DB 연결이 끊어지거나 SQL 구문 오류가 발생하면 여기서 잡힙니다.
-        print(f"[DB-ERROR] vision_data 테이블 저장 실패: {e}. Payload: {payload_dict.get('detections', 'N/A')[:100]}")
-        DB_CONN.rollback() # 안전하게 롤백
+        # 안전한 예외 메시지 출력: payload snippet을 문자열로 변환 후 길이 제한
+        snippet = ""
+        try:
+            snippet = json.dumps(payload_dict)[:200]
+        except Exception:
+            snippet = str(payload_dict)[:200]
+        print(f"[{now}] [DB-ERROR] vision_data 저장 실패: {e}. Payload snippet: {snippet}")
+        DB_CONN.rollback()
 
 def save_imu_raw_data(payload_dict: dict):
     """imu_data 테이블에 연속적인 Pitch/Roll/Yaw 데이터를 저장"""
@@ -530,43 +530,59 @@ def on_connect(client, userdata, flags, rc):
         print("[FAIL] Connection failed, code:", rc)
 
 # === [데이터 라우터] 핵심 로직 ===
+
 def process_and_save_data(msg):
     """
-    수신된 MQTT 메시지를 분석하여 알맞은 테이블에 저장하고, 
+    수신된 MQTT 메시지를 분석하여 알맞은 테이블에 저장하고,
     필요 시 이벤트를 생성합니다.
     """
-    
+
     # 1. 토픽 파싱
     topic = msg.topic
     payload = msg.payload.decode('utf-8')
     payload_dict = parse_payload_to_dict(payload)
-    
-    parts = topic.split('/') 
-    
-    if len(parts) < 3:
-        # command/summary 같은 2단계 토픽은 아래 if topic.startswith(COMMAND_TOPIC)에서 처리됩니다.
-        if not topic.startswith("command/"):
-             print(f"[WARN] Skipping short topic: {topic}")
-        return
 
-    module = parts[1].upper()
-    action = parts[2].upper()
+    parts = topic.split('/')
+
+    # 기본값: 안전하게 처리
+    module = None
+    action = None
+
+    # common patterns:
+    # - project/imu/RAW                -> parts = [project, imu, RAW]   (module=imu, action=RAW)
+    # - project/vision/AD/RAW          -> parts = [project, vision, AD, RAW] (module=AD, action=RAW)
+    # - project/vision/PE/ALERT        -> parts = [project, vision, PE, ALERT]
+
+    if len(parts) >= 4 and parts[1].lower() == 'vision':
+        # vision has an extra level: project/vision/<MODULE>/<ACTION>
+        module = parts[2].upper()
+        action = parts[3].upper()
+    elif len(parts) >= 3:
+        # regular 3-level topics: project/<MODULE>/<ACTION>
+        module = parts[1].upper()
+        action = parts[2].upper()
+    else:
+        # too short: ignore unless it's a command topic handled elsewhere
+        if not topic.startswith("command/"):
+            print(f"[WARN] Skipping short or unknown topic: {topic}")
+        return
 
     # =======================================================
     # 2. 데이터 라우팅 및 저장 (ALERT 우선 처리)
     # =======================================================
-    
+
     # 2-1. 🚨 ALERT 토픽 처리 (CRITICAL/WARNING 레벨)
     if action == "ALERT":
         save_event_log(module, action, payload)
-        
+
         # ALERT 데이터도 vision_data에 상세 기록 추가
+        # VISION 시스템의 모든 세부 모듈(AD, PE 포함) 데이터를 vision_data에 통합 저장합니다.
         if module in ["VISION", "AD", "PE"]:
             save_vision_data(module, action, payload_dict)
             print(f"[{now_str()}] [DB] ALERT log saved to events AND vision_data: {module}/{action}")
         else:
             print(f"[{now_str()}] [DB] ALERT log saved to events: {module}/{action}")
-        
+
         return
 
     # 2-2. 🟢 RAW 토픽 처리 (INFO 레벨 - 연속 데이터)
@@ -574,17 +590,18 @@ def process_and_save_data(msg):
         if module == "IMU":
             save_imu_raw_data(payload_dict)
             print(f"[{now_str()}] [DB] Saved IMU RAW data to imu_data table.")
-        
+
+        # VISION 시스템의 모든 세부 모듈(AD, PE 포함) 데이터를 vision_data에 통합 저장합니다.
         elif module in ["VISION", "AD", "PE"]:
             save_vision_data(module, action, payload_dict)
             print(f"[{now_str()}] [DB] Saved {module} RAW data to vision_data table.")
-            
+
         else:
             print(f"[{now_str()}] [WARN] Unknown RAW module: {module}. Data discarded.")
         return
-        
+
     # 2-3. 기타 일반 시스템/STT 이벤트 (events 테이블)
-    else: 
+    else:
         save_event_log(module, action, payload)
         print(f"[{now_str()}] [LOG] Saved general log to events table. Module: {module}")
         

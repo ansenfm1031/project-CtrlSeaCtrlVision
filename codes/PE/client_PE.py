@@ -24,8 +24,9 @@ TOPIC_BASE = "project/vision"
 
 # 수정: 모듈 이름 및 토픽 분리
 PE_MODULE = "PE"
-RAW_TOPIC = TOPIC_BASE + "/" + PE_MODULE + "/RAW"
-ALERT_TOPIC = TOPIC_BASE + "/" + PE_MODULE + "/ALERT" # 경고 토픽도 PE 전용으로 분리
+RAW_TOPIC = f"{TOPIC_BASE}/{PE_MODULE}/RAW"
+# ALERT 토픽 정의
+ALERT_TOPIC = f"{TOPIC_BASE}/{PE_MODULE}/ALERT"
 
 def now_str():
     """ISO 8601 형식의 현재 UTC 시각을 반환합니다."""
