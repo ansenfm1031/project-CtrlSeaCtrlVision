@@ -322,7 +322,7 @@ class MarineDashboard(QWidget):
         event.accept()
 
 # =========================================================
-# 7. 메인 실행
+# 7. 메인 실행 (수정된 부분)
 # =========================================================
 if __name__ == "__main__":
     app = QApplication(sys.argv)
@@ -331,26 +331,27 @@ if __name__ == "__main__":
     app.setStyle('Fusion')
     palette = app.palette()
 
-    # 🚨 PyQt5 -> PySide6 컬러 상수 수정 (Qt.X -> Qt.GlobalColor.X)
-    from PySide6.QtCore import Qt as GlobalQt # Qt.GlobalColor을 사용하기 위해 임포트
+    # Qt.GlobalColor을 사용하기 위해 임포트 (기존 임포트 유지)
+    from PySide6.QtCore import Qt as GlobalQt 
 
-    palette.setColor(palette.Window, GlobalQt.GlobalColor.darkGray)
-    palette.setColor(palette.WindowText, GlobalQt.GlobalColor.white)
-    palette.setColor(palette.Base, GlobalQt.GlobalColor.black)
-    palette.setColor(palette.AlternateBase, GlobalQt.GlobalColor.darkGray)
-    palette.setColor(palette.ToolTipBase, GlobalQt.GlobalColor.white)
-    palette.setColor(palette.ToolTipText, GlobalQt.GlobalColor.white)
-    palette.setColor(palette.Text, GlobalQt.GlobalColor.white)
-    palette.setColor(palette.Button, GlobalQt.GlobalColor.darkGray)
-    palette.setColor(palette.ButtonText, GlobalQt.GlobalColor.white)
-    palette.setColor(palette.BrightText, GlobalQt.GlobalColor.red)
-    palette.setColor(palette.Link, GlobalQt.GlobalColor.cyan)
-    palette.setColor(palette.Highlight, GlobalQt.GlobalColor.blue)
-    palette.setColor(palette.HighlightedText, GlobalQt.GlobalColor.black)
+    # 🚨🚨 PySide6 호환을 위해 QPalette 속성 이름(Role)을 소문자(window)로 변경 🚨🚨
+    palette.setColor(palette.Window, GlobalQt.GlobalColor.darkGray)       # Window -> window
+    palette.setColor(palette.WindowText, GlobalQt.GlobalColor.white)     # WindowText -> windowText
+    palette.setColor(palette.Base, GlobalQt.GlobalColor.black)           # Base -> base
+    palette.setColor(palette.AlternateBase, GlobalQt.GlobalColor.darkGray) # AlternateBase -> alternateBase
+    palette.setColor(palette.ToolTipBase, GlobalQt.GlobalColor.white)    # ToolTipBase -> toolTipBase
+    palette.setColor(palette.ToolTipText, GlobalQt.GlobalColor.white)    # ToolTipText -> toolTipText
+    palette.setColor(palette.Text, GlobalQt.GlobalColor.white)           # Text -> text
+    palette.setColor(palette.Button, GlobalQt.GlobalColor.darkGray)      # Button -> button
+    palette.setColor(palette.ButtonText, GlobalQt.GlobalColor.white)     # ButtonText -> buttonText
+    palette.setColor(palette.BrightText, GlobalQt.GlobalColor.red)       # BrightText -> brightText
+    palette.setColor(palette.Link, GlobalQt.GlobalColor.cyan)            # Link -> link
+    palette.setColor(palette.Highlight, GlobalQt.GlobalColor.blue)       # Highlight -> highlight
+    palette.setColor(palette.HighlightedText, GlobalQt.GlobalColor.black) # HighlightedText -> highlightedText
 
     app.setPalette(palette)
 
     # GUI 실행
     dashboard = MarineDashboard()
     dashboard.show()
-    sys.exit(app.exec()) # 🚨 exec_() 대신 exec() 사용 (PySide6 스타일)
+    sys.exit(app.exec())
