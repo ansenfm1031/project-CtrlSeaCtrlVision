@@ -559,7 +559,14 @@ def process_and_save_data(msg):
     # 2-1. 🚨 ALERT 토픽 처리 (CRITICAL/WARNING 레벨)
     if action == "ALERT":
         save_event_log(module, action, payload)
-        print(f"[{now_str()}] [DB] ALERT log saved to events: {module}/{action}")
+        
+        # ALERT 데이터도 vision_data에 상세 기록 추가
+        if module in ["VISION", "AD", "PE"]:
+            save_vision_data(module, action, payload_dict)
+            print(f"[{now_str()}] [DB] ALERT log saved to events AND vision_data: {module}/{action}")
+        else:
+            print(f"[{now_str()}] [DB] ALERT log saved to events: {module}/{action}")
+        
         return
 
     # 2-2. 🟢 RAW 토픽 처리 (INFO 레벨 - 연속 데이터)
