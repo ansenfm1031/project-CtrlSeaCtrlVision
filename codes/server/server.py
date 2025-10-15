@@ -11,6 +11,7 @@ import json
 import threading # STT 기능을 별도 스레드에서 실행하기 위함
 import speech_recognition as sr # STT 기능 추가
 import time # sleep 함수 사용
+import subprocess
 
 # === DB 연결 (MariaDB) ===
 DB_HOST = "localhost"
@@ -29,6 +30,10 @@ QUERY_TOPIC = "command/query" # 일반 질의 명령
 # STT 초기화 실패 시 어떤 장치가 사용 가능한지 확인하기 위한 변수
 # 기본값은 None이며, STT가 실패하면 이 변수를 통해 사용 가능한 장치 정보를 출력합니다.
 AUDIO_DEVICE_INFO = None 
+
+# TTS 재생 중단 기능을 위한 전역 변수
+TTS_PROCESS = None
+TTS_LOCK = threading.Lock()
 
 # === OpenAI 클라이언트 설정 ===
 client_llm = OpenAI() # 키는 환경 변수에서 자동 로드됩니다.
@@ -398,18 +403,21 @@ def summarize_logs(logs, imu_stats, minutes):
     return summary
     
 # === TTS 변환 및 재생 ===
-def text_to_speech(text, filename="summary.mp3"):
-    """텍스트를 gTTS로 MP3 파일로 변환 후 mpv를 사용하여 재생합니다."""
-    try:
-        clean_text = clean_tts_text(text)
-        tts = gTTS(text=clean_text, lang="ko")
-        tts.save(filename)
-        # mpv --no-terminal --volume=100 --speed=1.3 명령을 통해 재생 (Linux/macOS 환경 가정)
-        os.system(f"mpv --no-terminal --volume=100 --speed=1.3 {filename}") 
-        print("[TTS] Summary spoken successfully.")
-    except Exception as e:
-        print(f"[TTS Error] {e}")
-
+def play_tts(text, filename="summary.mp3"):
+    """TTS 재생. 기존 재생 중이면 중단 후 새로 재생"""
+    global TTS_PROCESS
+    with TTS_LOCK:
+        if TTS_PROCESS and TTS_PROCESS.poll() is None:
+            # 기존 TTS 중단
+            TTS_PROCESS.terminate()
+            TTS_PROCESS.wait()
+        try:
+            clean_text = clean_tts_text(text)
+            tts = gTTS(text=clean_text, lang="ko")
+            tts.save(filename)
+            TTS_PROCESS = subprocess.Popen(["mpv", "--no-terminal", "--volume=100", "--speed=1.3", filename])
+        except Exception as e:
+            print(f"[TTS Error] {e}")
 
 # =======================================================================
 # === [STT/음성 명령] 스레드 로직 추가 ===
@@ -450,6 +458,14 @@ def parse_speech_command(text: str) -> tuple[str, str]:
 def stt_listening_loop():
     """마이크 입력을 받고 음성을 텍스트로 변환하여 MQTT로 전송하는 독립 루프입니다."""
     r = sr.Recognizer()
+
+    topic,payload=parse_speech_command(text)
+    
+    # STT 명령 발화 시 기존 TTS 중단
+    with TTS_LOCK:
+        if TTS_PROCESS and TTS_PROCESS.poll() is None:
+            TTS_PROCESS.terminate()
+            TTS_PROCESS.wait()
 
     # MQTT publish는 독립 스레드에서 publish.single을 사용합니다.
     mqtt_broker = BROKER 
@@ -572,17 +588,28 @@ def process_and_save_data(msg):
     # =======================================================
 
     # 2-1. 🚨 ALERT 토픽 처리 (CRITICAL/WARNING 레벨)
-    if action == "ALERT":
-        save_event_log(module, action, payload)
+    if action in ["ALERT", "CRITICAL"]:
+        now = now_str()
 
-        # ALERT 데이터도 vision_data에 상세 기록 추가
-        # VISION 시스템의 모든 세부 모듈(AD, PE 포함) 데이터를 vision_data에 통합 저장합니다.
+        # 1️⃣ 기존 TTS 재생 중단
+        global TTS_PROCESS, TTS_LOCK
+        with TTS_LOCK:
+            if 'TTS_PROCESS' in globals() and TTS_PROCESS and TTS_PROCESS.poll() is None:
+                TTS_PROCESS.terminate()
+                TTS_PROCESS.wait()
+                print(f"[{now}] [TTS] 기존 TTS 재생 중단 완료")
+
+        # 2️⃣ DB 저장
+        save_event_log(module, action, payload)
         if module in ["VISION", "AD", "PE"]:
             save_vision_data(module, action, payload_dict)
-            print(f"[{now_str()}] [DB] ALERT log saved to events AND vision_data: {module}/{action}")
+            print(f"[{now}] [DB] ALERT/CRITICAL log saved to events AND vision_data: {module}/{action}")
         else:
-            print(f"[{now_str()}] [DB] ALERT log saved to events: {module}/{action}")
+            print(f"[{now}] [DB] ALERT/CRITICAL log saved to events: {module}/{action}")
 
+        # 3️⃣ 긴급 알람 TTS 재생
+        print(f"[{now}] [TTS] 긴급 알람 발화: {module} {action}")
+        play_tts(f"긴급 알람 발생: {module} {action}")
         return
 
     # 2-2. 🟢 RAW 토픽 처리 (INFO 레벨 - 연속 데이터)
