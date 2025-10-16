@@ -800,7 +800,6 @@ def process_and_save_data(msg):
         socketio.emit('alert_event', alert_data)
         
         print(f"[{now}] [DB/WEB] ALERT/CRITICAL processed: {module}/{action}")
-        return
 
     # 2-2. 🟢 RAW 토픽 처리 (INFO 레벨 - 연속 데이터)
     elif action == "RAW":
@@ -832,9 +831,6 @@ def on_connect(client, userdata, flags, rc):
     global DB_CONN, CURSOR
     print(f"[INFO] Connected with result code {rc}")
     if rc == 0:
-        # DB 연결 시도
-        connect_db() # 🚨 DB 연결 추가
-        
         # 구독: project/ 하위의 모든 토픽
         client.subscribe(TOPIC_BASE + "#") 
         print(f"[INFO] Subscribed to topic: {TOPIC_BASE}#")
@@ -847,51 +843,13 @@ def on_connect(client, userdata, flags, rc):
 
 # === [MQTT 콜백] 명령어 처리 후 데이터 라우팅을 'process_and_save_data'로 위임하는 진입점. ===
 def on_message(client, userdata, msg):
-    """MQTT 메시지 수신 시 호출되며, DB 저장 및 SocketIO 웹 전송을 수행합니다."""
+    """MQTT 메시지 수신 시 호출되며, 모든 처리를 process_and_save_data 함수로 위임합니다."""
     try:
-        payload_str = msg.payload.decode('utf-8')
-        payload = json.loads(payload_str)
-        topic = msg.topic
-        
-        # 1. DB에 저장할 기본 데이터 추출
-        ts = payload.get('timestamp') or datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-        module = payload.get('module', topic.split('/')[2] if len(topic.split('/')) > 2 else 'UNKNOWN')
-        
-        # RAW 데이터 처리
-        if topic.endswith("/RAW"):
-            # DB에 저장
-            is_detected = payload.get('person_detected', False)
-            description = f"Person Detected: {is_detected}"
-            insert_into_db(ts, module, "General", 0, description, payload)
-            
-            # SocketIO로 웹에 실시간 전송 (raw_data 이벤트)
-            # index.html의 socket.on('raw_data', ...)와 연동됩니다.
-            socketio.emit('raw_data', {
-                'ts': ts,
-                'topic': topic,
-                'payload': payload,
-            })
-            
-        # ALERT 데이터 처리 (Fall Down, Danger Zone 등)
-        elif topic.endswith("/ALERT"):
-            # DB에 저장
-            object_type = payload.get('object_type', 'Person')
-            risk_level = payload.get('risk_level', 4) # 위험 레벨
-            description = payload.get('action') or payload.get('message', 'Alert') # 상세 설명
-            insert_into_db(ts, module, object_type, risk_level, description, payload)
-            
-            # SocketIO로 웹에 실시간 전송 (alert_event 이벤트)
-            # index.html의 socket.on('alert_event', ...)와 연동됩니다.
-            socketio.emit('alert_event', {
-                'ts': ts,
-                'topic': topic,
-                'payload': payload,
-            })
-
-    except json.JSONDecodeError:
-        print(f"[ERROR] Failed to decode JSON from topic {msg.topic}")
+        # 모든 데이터 라우팅, DB 저장, SocketIO 전송, TTS 로직을 이 함수로 위임
+        process_and_save_data(msg)
     except Exception as e:
-        print(f"[CRITICAL] Error in on_message: {e}")
+        # process_and_save_data 내부에서 처리 못한 예외만 여기서 잡도록 수정
+        print(f"[{now_str()}] [CRITICAL] Error in on_message/router: {e}")
 
     # 2. === 데이터 처리 로직을 새로운 함수로 위임 ===
     process_and_save_data(msg)
