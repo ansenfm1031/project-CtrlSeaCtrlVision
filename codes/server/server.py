@@ -702,7 +702,22 @@ def process_and_save_data(msg):
         # save_event_log 함수 내부에서 SocketIO로 전송됨
         save_event_log(module, action, payload)
         print(f"[{now_str()}] [LOG] Saved general log to events table. Module: {module}")
-        
+
+def on_connect(client, userdata, flags, rc):
+    # rc=0: 연결 성공
+    if rc == 0:
+        print("[INFO] MQTT :: Connected successfully. Subscribing to topics.")
+        # 모든 project/# 토픽 (RAW, ALERT) 및 LLM 명령 토픽을 구독
+        client.subscribe([
+            (TOPIC_BASE + "#", 1),  # project/# (IMU/RAW, vision/AD/ALERT 등)
+            (COMMAND_TOPIC, 1),     # command/summary
+            (QUERY_TOPIC, 1)        # command/query
+        ])
+    else:
+        print(f"[CRITICAL] MQTT :: Connection failed (RC: {rc}). Exiting.")
+        sys.exit(1)
+
+
 # === [MQTT 콜백] 명령어 처리 후 데이터 라우팅을 'process_and_save_data'로 위임하는 진입점. ===
 def on_message(client, userdata, msg):
     """메시지가 수신될 때 호출되며, 토픽에 따라 데이터 저장 또는 명령을 처리합니다."""
