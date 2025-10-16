@@ -571,18 +571,36 @@ def summarize_logs(logs, imu_stats, minutes):
 def text_to_speech(text, filename="summary.mp3"):
     """TTS 재생. 기존 재생 중이면 중단 후 새로 재생"""
     global TTS_PROCESS
+    
+    # 1. 프로세스 생성 (mpv)
+    new_tts_process = None 
+    
     with TTS_LOCK:
         if TTS_PROCESS and TTS_PROCESS.poll() is None:
             # 기존 TTS 중단
             TTS_PROCESS.terminate()
             TTS_PROCESS.wait()
+            TTS_PROCESS = None
         try:
             clean_text = clean_tts_text(text)
             tts = gTTS(text=clean_text, lang="ko")
             tts.save(filename)
-            TTS_PROCESS = subprocess.Popen(["mpv", "--no-terminal", "--volume=100", "--speed=1.3", filename])
+            
+            # mpv 프로세스를 지역 변수에 저장
+            new_tts_process = subprocess.Popen(["mpv", "--no-terminal", "--volume=100", "--speed=1.3", filename])
+            TTS_PROCESS = new_tts_process # 전역 변수 업데이트
+            
         except Exception as e:
             print(f"[TTS Error] {e}")
+            
+    # 2. 프로세스 외부에서 대기 (LOCK을 오래 잡지 않기 위해)
+    # 🚨 생성된 프로세스만 대기하도록 수정
+    if new_tts_process:
+        new_tts_process.wait() # mpv 프로세스가 끝날 때까지 블록킹
+        # 재생 완료 후 전역 변수 초기화 (선택적)
+        with TTS_LOCK:
+            if TTS_PROCESS == new_tts_process:
+                TTS_PROCESS = None
 
 # =======================================================================
 # === [STT/음성 명령] 스레드 로직 ===
