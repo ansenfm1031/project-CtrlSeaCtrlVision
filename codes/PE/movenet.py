@@ -1,33 +1,31 @@
 """
-라즈베리파이5 최적화 낙상 감지 + 위험구역 시스템
-MoveNet Thunder + Rule-based Detection
+라즈베리파이5 최적화 낙상 감지 + 상태 전이 분석
+MoveNet Thunder + Rule-based Fall Detection + State Transition
 
-Requirements:
-pip install opencv-python numpy tensorflow>=2.8.0 tensorflow-hub ultralytics
+주요 기능:
+1. YOLOv8 사람 검출 필터링 강화
+2. Rule 기반 자세 분류 (Standing, Sitting, Walking, Lying Down)
+3. 상태 전이 분석 (Standing/Walking → Lying Down = Fall Down)
+4. 위험구역 모니터링
 """
 
 import os
 import cv2
 import time
-import torch
 import argparse
 import numpy as np
 import tensorflow as tf
 from ultralytics import YOLO
 
-# ============================================
-# 설정
-# ============================================
-DEBUG_MODE = False  # True로 하면 상세 로그
+DEBUG_MODE = False
 
-# 위험구역 설정 (절대 좌표)
+# 위험구역 설정
 USE_RATIO = False
 DANGER_X_MIN = None
 DANGER_X_MAX = 200
 DANGER_Y_MIN = None
 DANGER_Y_MAX = None
 
-# 비율 방식 (USE_RATIO = True일 때만 사용)
 DANGER_X_RATIO_MIN = None
 DANGER_X_RATIO_MAX = 0.3
 DANGER_Y_RATIO_MIN = None
@@ -38,9 +36,11 @@ ZONE_ALERT_TIME = 5
 SHOW_DANGER_AREA = True
 DANGER_AREA_COLOR = (0, 0, 255)
 
-# 넘어짐 판단 설정
-FALL_CONFIDENCE_THRESHOLD = 0.65
+# 낙상 판단 설정
+FALL_CONFIDENCE_THRESHOLD = 0.70
 FALL_FRAMES = 3
+FALL_TRANSITION_TIME = 1.0  # 상태 전이 판단 시간 (초)
+
 
 # ============================================
 # MoveNet 포즈 추정 모델
@@ -68,20 +68,8 @@ class MoveNetPose:
             except Exception as e:
                 print(f"❌ TFLite loading failed: {e}")
     
-    def _load_local_model(self, model_type):
-        """로컬 모델 로드 (오프라인 대비)"""
-        model_path = f'movenet_{model_type}.tflite'
-        if os.path.exists(model_path):
-            self.interpreter = tf.lite.Interpreter(model_path=model_path)
-            self.interpreter.allocate_tensors()
-            print(f"✅ Loaded local model: {model_path}")
-        else:
-            raise FileNotFoundError(f"Model file not found: {model_path}")
-    
     def predict(self, frame, bboxes, scores=None):
-        """
-        프레임 안의 여러 사람에 대한 자세를 예측합니다.
-        """
+        """프레임 안의 여러 사람에 대한 자세를 예측합니다."""
         if bboxes is None or len(bboxes) == 0:
             return []
 
@@ -141,123 +129,185 @@ class MoveNetPose:
             proposal_score = float(np.mean(keypoints[:, 2]))
             
             poses.append({
-                'keypoints': keypoints,  # [17, 3] 형태로 통일
+                'keypoints': keypoints,
                 'proposal_score': proposal_score,
                 'bbox': bbox
             })
         return poses
 
+
 # ============================================
-# 룰 기반 낙상 감지
+# Rule 기반 자세 분류
 # ============================================
+
 def estimate_motion(prev_kp, curr_kp):
-    """평균 키포인트 이동량 (걷기 인식용)"""
+    """평균 키포인트 이동량"""
     if prev_kp is None or len(prev_kp) == 0:
         return 0.0
     
-    # 신뢰도 체크
     valid = (prev_kp[:, 2] > 0.2) & (curr_kp[:, 2] > 0.2)
     if np.sum(valid) < 5:
         return 0.0
     
-    # 유효한 키포인트만 사용하여 이동량 계산
     diffs = np.linalg.norm(curr_kp[valid, :2] - prev_kp[valid, :2], axis=1)
     motion = float(np.mean(diffs))
     
-    if DEBUG_MODE:
-        print(f"    Motion calculation: {np.sum(valid)} valid points, motion={motion:.2f}")
-    
     return motion
-
-def calculate_body_angle(keypoints):
-    """몸의 기울기 각도 (0° = 완전 수직, 90° = 완전 수평)"""
-    if len(keypoints) < 13:
-        return None
-
-    valid_shoulder = []
-    valid_hip = []
-
-    if keypoints[5][2] > 0.2:
-        valid_shoulder.append(keypoints[5][:2])
-    if keypoints[6][2] > 0.2:
-        valid_shoulder.append(keypoints[6][:2])
-    if keypoints[11][2] > 0.2:
-        valid_hip.append(keypoints[11][:2])
-    if keypoints[12][2] > 0.2:
-        valid_hip.append(keypoints[12][:2])
-
-    if len(valid_shoulder) == 0 or len(valid_hip) == 0:
-        return None
-
-    shoulder_center = np.mean(valid_shoulder, axis=0)
-    hip_center = np.mean(valid_hip, axis=0)
-
-    dx = hip_center[0] - shoulder_center[0]
-    dy = shoulder_center[1] - hip_center[1]
-
-    angle = np.degrees(np.arctan2(abs(dx), abs(dy)))
-    return angle
-
-
-def get_body_aspect_ratio(keypoints):
-    """몸의 가로/세로 비율"""
-    valid_points = keypoints[keypoints[:, 2] > 0.15]
-    
-    if len(valid_points) < 3:
-        return None
-    
-    x_coords = valid_points[:, 0]
-    y_coords = valid_points[:, 1]
-    
-    width = x_coords.max() - x_coords.min()
-    height = y_coords.max() - y_coords.min()
-    
-    if height < 5:
-        return None
-    
-    return width / height
 
 
 def detect_fall_rule_based(keypoints, prev_keypoints=None):
-    """향상된 룰 기반 상태 인식"""
+    """균형잡힌 자세 분류 - Standing과 Sitting 모두 정확하게"""
     
-    angle = calculate_body_angle(keypoints)
-    ratio = get_body_aspect_ratio(keypoints)
-    motion = estimate_motion(prev_keypoints, keypoints)
-
     conf = float(np.mean(keypoints[:, 2]))
-
-    if angle is None or ratio is None:
-        return 'Unknown', conf, {}
+    valid_kp = keypoints[keypoints[:, 2] > 0.2]
     
-    details = {"angle": f"{angle:.1f}", "ratio": f"{ratio:.2f}", "motion": f"{motion:.1f}"}
+    if len(valid_kp) < 5:
+        return 'Unknown', conf * 0.3, {}
     
-    if DEBUG_MODE:
-        print(f"  DEBUG >>> Angle: {angle:.1f}°, Ratio: {ratio:.2f}, Motion: {motion:.1f}")
-
-    # 1. 눕거나 넘어진 상태
-    if angle > 50:
-        if ratio > 1.0:
-            if motion < 7:
-                return 'Lying Down', conf * 0.95, details
-            else:
-                return 'Fall Down', conf * 1.0, details
+    # 1. 기본 바운딩 박스 특징
+    width = valid_kp[:, 0].max() - valid_kp[:, 0].min()
+    height = valid_kp[:, 1].max() - valid_kp[:, 1].min()
+    ratio = width / (height + 1e-6)
+    
+    # 2. 주요 관절 위치 추출
+    shoulder_y = [keypoints[i][1] for i in [5, 6] if keypoints[i][2] > 0.2]
+    shoulder_x = [keypoints[i][0] for i in [5, 6] if keypoints[i][2] > 0.2]
+    
+    hip_y = [keypoints[i][1] for i in [11, 12] if keypoints[i][2] > 0.15]
+    hip_x = [keypoints[i][0] for i in [11, 12] if keypoints[i][2] > 0.15]
+    
+    knee_y = [keypoints[i][1] for i in [13, 14] if keypoints[i][2] > 0.15]
+    ankle_y = [keypoints[i][1] for i in [15, 16] if keypoints[i][2] > 0.15]
+    
+    # 3. 거리 계산
+    sh_dist = 0
+    if len(shoulder_y) > 0 and len(hip_y) > 0:
+        sh_dist = abs(np.mean(hip_y) - np.mean(shoulder_y))
+    
+    hk_dist = 0
+    if len(hip_y) > 0 and len(knee_y) > 0:
+        hk_dist = abs(np.mean(knee_y) - np.mean(hip_y))
+    
+    ha_dist = 0
+    if len(hip_y) > 0 and len(ankle_y) > 0:
+        ha_dist = abs(np.mean(ankle_y) - np.mean(hip_y))
+    elif len(hip_y) > 0 and len(knee_y) > 0:
+        ha_dist = hk_dist * 1.6
+    
+    shoulder_width = 0
+    if len(shoulder_x) >= 2:
+        shoulder_width = abs(max(shoulder_x) - min(shoulder_x))
+    
+    hip_width = 0
+    if len(hip_x) >= 2:
+        hip_width = abs(max(hip_x) - min(hip_x))
+    
+    # 4. 모션
+    motion = 0.0
+    if prev_keypoints is not None:
+        motion = estimate_motion(prev_keypoints, keypoints)
+    
+    # 5. 비율 특징
+    upper_ratio = sh_dist / (height + 1e-6)
+    lower_ratio = ha_dist / (height + 1e-6)
+    thigh_ratio = hk_dist / (height + 1e-6)
+    
+    horizontal_spread = (shoulder_width + hip_width) / 2
+    vertical_horizontal_ratio = height / (horizontal_spread + 1e-6)
+    
+    details = {
+        "ratio": f"{ratio:.2f}",
+        "height": f"{height:.0f}",
+        "sh": f"{sh_dist:.0f}",
+        "ha": f"{ha_dist:.0f}",
+        "upper_r": f"{upper_ratio:.2f}",
+        "lower_r": f"{lower_ratio:.2f}",
+        "vh_ratio": f"{vertical_horizontal_ratio:.2f}",
+        "motion": f"{motion:.1f}"
+    }
+    
+    # 6. 균형잡힌 분류 로직
+    
+    # 🔴 1순위: 누워있음
+    if ratio > 1.1 or vertical_horizontal_ratio < 1.5:
+        return 'Lying Down', conf * 0.95, details
+    
+    # 🔴 2순위: 명확한 걷기
+    if motion > 8 and height > 100 and lower_ratio > 0.35:
+        return 'Walking', conf * 0.92, details
+    
+    # 🔴 3순위: 명확한 서있음 (Lower가 매우 높음)
+    if lower_ratio >= 0.45 and ratio < 0.50:
+        return 'Standing', conf * 0.92, details
+    
+    # 🔴 4순위: 명확한 앉아있음 (2가지 조건 중 하나)
+    # 케이스 A: 하체가 매우 짧고 + 가로 비율 높음
+    if lower_ratio < 0.25 and ratio > 0.55:
+        return 'Sitting', conf * 0.92, details
+    
+    # 케이스 B: 하체가 짧고 + 상체 비중 높고 + VH 낮음
+    if lower_ratio < 0.32 and upper_ratio > 0.50 and vertical_horizontal_ratio < 5.0:
+        return 'Sitting', conf * 0.90, details
+    
+    # 🔴 5순위: 종합 점수 기반 (균형잡힌 판정)
+    sitting_score = 0
+    standing_score = 0
+    
+    # 1. Lower 비율 (가장 중요)
+    if lower_ratio < 0.20:
+        sitting_score += 4
+    elif lower_ratio < 0.30:
+        sitting_score += 3
+    elif lower_ratio < 0.38:
+        sitting_score += 1
+    elif lower_ratio >= 0.42:
+        standing_score += 3
+    else:
+        standing_score += 1
+    
+    # 2. Ratio (가로/세로)
+    if ratio > 0.65:
+        sitting_score += 3
+    elif ratio > 0.55:
+        sitting_score += 2
+    elif ratio < 0.45:
+        standing_score += 2
+    
+    # 3. Upper 비율
+    if upper_ratio > 0.60:
+        sitting_score += 2
+    elif upper_ratio > 0.50:
+        sitting_score += 1
+    elif upper_ratio < 0.38:
+        standing_score += 1
+    
+    # 4. VH 비율
+    if vertical_horizontal_ratio > 10.0:
+        standing_score += 2
+    elif vertical_horizontal_ratio > 6.0:
+        standing_score += 1
+    elif vertical_horizontal_ratio < 4.0:
+        sitting_score += 2
+    elif vertical_horizontal_ratio < 5.5:
+        sitting_score += 1
+    
+    # 5. 키
+    if height < 100:
+        sitting_score += 2
+    elif height > 180:
+        standing_score += 1
+    
+    # 최종 판정 (마진 1로 균형)
+    if sitting_score > standing_score + 1:
+        return 'Sitting', conf * 0.75, details
+    elif standing_score > sitting_score + 1:
+        return 'Standing', conf * 0.75, details
+    else:
+        # 동점이거나 차이가 1이면 Lower 우선
+        if lower_ratio < 0.35:
+            return 'Sitting', conf * 0.70, details
         else:
-            return 'Unknown', conf, details
-
-    # 2. 앉은 상태
-    elif 10 <= angle < 50 and ratio > 0.5:
-        return 'Sitting', conf * 0.9, details
-    
-    # 3. 서 있거나 걷는 상태
-    elif angle < 10:
-        if motion > 2:
-            return 'Walking', conf, details
-        else:
-            return 'Standing', conf, details
-    
-    else: 
-        return 'Unknown', conf, details
+            return 'Standing', conf * 0.70, details
 
 
 # ============================================
@@ -347,29 +397,69 @@ def draw_zone_warnings(frame, zone_warnings):
 
 
 # ============================================
-# 간단한 트래커
+# 개선된 트래커 (사람 필터링 강화)
 # ============================================
 
-class SimpleTracker:
-    """간단한 IoU 기반 트래커"""
+class ImprovedTracker:
+    """개선된 IoU 기반 트래커 with 사람 검증"""
     
-    def __init__(self, max_age=30):
+    def __init__(self, max_age=12):
         self.tracks = {}
         self.next_id = 1
         self.max_age = max_age
+        self.frame_count = 0
+    
+    def _is_valid_person(self, keypoints, bbox):
+        """사람인지 검증하는 추가 필터"""
+        # 1. 평균 키포인트 신뢰도
+        avg_conf = np.mean(keypoints[:, 2])
+        if avg_conf < 0.25:
+            return False
+        
+        # 2. 주요 관절(어깨, 엉덩이) 존재 여부
+        important_kp = [5, 6, 11, 12]
+        important_conf = [keypoints[i][2] for i in important_kp if i < len(keypoints)]
+        if len(important_conf) < 2 or np.mean(important_conf) < 0.3:
+            return False
+        
+        # 3. bbox 크기 체크
+        x1, y1, x2, y2 = bbox
+        width = x2 - x1
+        height = y2 - y1
+        
+        if width < 20 or height < 30:
+            return False
+        if width > 700 or height > 800:
+            return False
+        
+        # 4. 종횡비 체크
+        aspect = height / (width + 1e-6)
+        if aspect < 0.4:
+            return False
+        
+        return True
     
     def update(self, detections):
-        """
-        detections: List of {'bbox': [x1,y1,x2,y2], 'keypoints': array, 'score': float}
-        """
+        """detections: List of {'bbox': [x1,y1,x2,y2], 'keypoints': array, 'score': float}"""
+        self.frame_count += 1
+        
         # 기존 트랙 나이 증가
         for track_id in list(self.tracks.keys()):
             self.tracks[track_id]['age'] += 1
             if self.tracks[track_id]['age'] > self.max_age:
+                print(f"[TRACKER] Removing track #{track_id} (age: {self.tracks[track_id]['age']})")
                 del self.tracks[track_id]
         
-        # IoU 매칭
+        # 사람 검증 필터링 추가
+        valid_detections = []
         for det in detections:
+            if self._is_valid_person(det['keypoints'], det['bbox']):
+                valid_detections.append(det)
+            elif DEBUG_MODE:
+                print(f"  Filtered out invalid detection (low quality)")
+        
+        # IoU 매칭
+        for det in valid_detections:
             best_iou = 0
             best_id = None
             
@@ -383,8 +473,6 @@ class SimpleTracker:
                 # 기존 트랙 업데이트
                 self.tracks[best_id]['bbox'] = det['bbox']
                 self.tracks[best_id]['keypoints'].append(det['keypoints'])
-                if len(self.tracks[best_id]['keypoints']) > 30:
-                    self.tracks[best_id]['keypoints'].pop(0)
                 self.tracks[best_id]['age'] = 0
             else:
                 # 새 트랙 생성
@@ -419,20 +507,27 @@ class SimpleTracker:
 # YOLOv8 검출기
 # ============================================
 
-class YOLOv8_Detector:
-    def __init__(self, model_name='yolov8n.pt', conf_thres=0.65, device='cpu'):
+class ImprovedYOLODetector:
+    """강화된 사람 검출 필터링"""
+    
+    def __init__(self, model_name='yolov8n.pt', conf_thres=0.5, device='cpu'):
         self.model = YOLO(model_name)
         self.conf_thres = conf_thres
         self.device = device
     
     def detect(self, frame):
-        """사람 검출"""
+        """사람만 검출 (추가 필터링)"""
+        #프레임 리사이즈(YOLO입력만)
+        h,w = frame.shape[:2]
+        frame_resized = cv2.resize(frame, (640,480))
+
         results = self.model.predict(
             frame,
             conf=self.conf_thres,
-            classes=[0],  # person only
+            classes=[0],
             device=self.device,
-            verbose=False
+            verbose=False,
+            imgsz=320
         )
         
         if len(results) == 0 or len(results[0].boxes) == 0:
@@ -444,7 +539,30 @@ class YOLOv8_Detector:
         
         for box in boxes:
             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-            conf = box.conf[0].cpu().numpy()
+            conf = float(box.conf[0].cpu().numpy())
+            cls = int(box.cls[0].cpu().numpy())
+            
+            if cls != 0:
+                continue
+            
+            width = x2 - x1
+            height = y2 - y1
+            
+            if width < 40 or height < 35:
+                if DEBUG_MODE:
+                    print(f"  Filtered bbox: too small ({width:.0f}x{height:.0f})")
+                continue
+            
+            if width > frame.shape[1] * 0.9 or height > frame.shape[0] * 0.9:
+                if DEBUG_MODE:
+                    print(f"  Filtered bbox: too large ({width:.0f}x{height:.0f})")
+                continue
+            
+            aspect = height / (width + 1e-6)
+            if aspect < 0.3:
+                if DEBUG_MODE:
+                    print(f"  Filtered bbox: invalid aspect ratio {aspect:.2f}")
+                continue
             
             bboxes.append([x1, y1, x2, y2])
             scores.append(conf)
@@ -457,22 +575,20 @@ class YOLOv8_Detector:
 # ============================================
 
 SKELETON_CONNECTIONS = [
-    (0, 1), (0, 2), (1, 3), (2, 4),  # 얼굴
-    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # 팔
-    (5, 11), (6, 12), (11, 12),  # 몸통
-    (11, 13), (13, 15), (12, 14), (14, 16)  # 다리
+    (0, 1), (0, 2), (1, 3), (2, 4),
+    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
+    (5, 11), (6, 12), (11, 12),
+    (11, 13), (13, 15), (12, 14), (14, 16)
 ]
 
 def draw_skeleton(frame, keypoints):
     """스켈레톤 그리기"""
-    # 연결선 그리기
     for start_idx, end_idx in SKELETON_CONNECTIONS:
         if keypoints[start_idx][2] > 0.3 and keypoints[end_idx][2] > 0.3:
             start = tuple(keypoints[start_idx][:2].astype(int))
             end = tuple(keypoints[end_idx][:2].astype(int))
             cv2.line(frame, start, end, (0, 255, 0), 2)
     
-    # 키포인트 점 그리기
     for i, kp in enumerate(keypoints):
         if kp[2] > 0.3:
             cv2.circle(frame, tuple(kp[:2].astype(int)), 4, (0, 0, 255), -1)
@@ -481,12 +597,12 @@ def draw_skeleton(frame, keypoints):
 
 
 # ============================================
-# 메인
+# 메인 함수
 # ============================================
 
 def main():
-    parser = argparse.ArgumentParser(description='Raspberry Pi 5 Optimized Fall Detection')
-    parser.add_argument('--camera', type=str, default='0', help='Camera source or video path')
+    parser = argparse.ArgumentParser(description='Improved Fall Detection with State Transition')
+    parser.add_argument('--camera', type=str, default='0', help='Camera source')
     parser.add_argument('--device', type=str, default='cpu', help='cpu only for RPi5')
     parser.add_argument('--model', type=str, default='thunder', choices=['thunder', 'lightning'])
     parser.add_argument('--save_out', type=str, default='', help='Save output video')
@@ -494,19 +610,19 @@ def main():
     args = parser.parse_args()
     
     print("="*60)
-    print("Raspberry Pi 5 Optimized Fall Detection System")
+    print("Improved Fall Detection System")
+    print("- Object Detection: YOLOv8n (Enhanced Filtering)")
     print("- Pose: MoveNet " + args.model.title())
-    print("- Detection: Rule-based")
     print("- Device: CPU")
     print("="*60)
     
     # 모델 로드
     print("\n1️⃣ Loading models...")
-    detector = YOLOv8_Detector(model_name='yolov8n.pt', conf_thres=0.5, device='cpu')
+    detector = ImprovedYOLODetector(model_name='yolov8n.pt', conf_thres=0.5, device='cpu')
     pose_model = MoveNetPose(model_type=args.model)
     
     # 트래커
-    tracker = SimpleTracker(max_age=50)
+    tracker = ImprovedTracker(max_age=12)
     
     # 카메라
     print("\n2️⃣ Opening camera...")
@@ -533,12 +649,20 @@ def main():
     
     # 상태 변수
     fall_counters = {}
+    fall_alerted = {}  # 🔴 낙상 알림 여부 추적
     zone_timers = {}
+    previous_states = {}  # 🔴 상태 전이 분석용
+    
     fps_time = time.time()
     frame_count = 0
     
     print("\n3️⃣ Starting detection... (Press 'q' to quit)\n")
-    
+   
+    last_bboxes = []
+    last_scores = []
+    yolo_skip_counter = 0
+    YOLO_SKIP_FRAMES =3
+ 
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -549,9 +673,21 @@ def main():
         
         # 위험구역 그리기
         frame = draw_danger_area(frame)
-        
+
+        yolo_skip_counter += 1
+        if yolo_skip_counter >= YOLO_SKIP_FRAMES:
+            bboxes, scores = detector.detect(frame)
+            last_bboxes = bboxes
+            last_scores = scores
+            yolo_skip_counter = 0
+        else: 
+            bboxes = last_bboxes
+            scores = last_scores        
         # 사람 검출
         bboxes, scores = detector.detect(frame)
+        
+        if DEBUG_MODE and frame_count % 30 == 0:
+            print(f"\nFrame {frame_count}: Detected {len(bboxes)} persons")
         
         # 포즈 추정
         detections = []
@@ -559,7 +695,7 @@ def main():
             poses = pose_model.predict(frame, bboxes, scores)
             
             for pose, bbox in zip(poses, bboxes):
-                keypoints = pose['keypoints']  # [17, 3] 형태
+                keypoints = pose['keypoints']
                 
                 detections.append({
                     'bbox': bbox,
@@ -579,7 +715,6 @@ def main():
             track = tracker.tracks[track_id]
             bbox = track['bbox']
             keypoints_list = track['keypoints']
-            
             if len(keypoints_list) < 1:
                 continue
             
@@ -596,7 +731,6 @@ def main():
                 
                 elapsed = current_time - zone_timers[track_id]
                 
-                # 체류 시간 표시
                 time_text = f"Zone: {elapsed:.1f}s"
                 cv2.putText(frame, time_text, (x1, y1 - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
@@ -611,52 +745,132 @@ def main():
                     print(f"[DANGER ZONE] Worker #{track_id} left (stayed {final_time:.1f}s)")
                     del zone_timers[track_id]
             
-            # 낙상 감지 - 이전 키포인트 전달 (핵심 수정!)
+            # 🔴 ========================================
+            # Rule 기반 자세 분류
+            # 🔴 ========================================
             current_kp = keypoints_list[-1]
             prev_kp = keypoints_list[-2] if len(keypoints_list) >= 2 else None
             
-            if DEBUG_MODE and track_id == 1:  # 첫 번째 사람만 디버깅
-                print(f"\n[Track #{track_id}] Frame {frame_count}")
-                print(f"  Current KP shape: {current_kp.shape}")
-                if prev_kp is not None:
-                    print(f"  Previous KP shape: {prev_kp.shape}")
+            rule_action, rule_conf, details = detect_fall_rule_based(current_kp, prev_kp)
             
-            action_name, confidence, details = detect_fall_rule_based(current_kp, prev_kp)
+            # 🔴 ========================================
+            # 상태 전이 분석: Fall Down 감지
+            # (Rule 결과 직후에 수행)
+            # 🔴 ========================================
+            
+            # 이전 상태 가져오기
+            if track_id in previous_states:
+                prev_action = previous_states[track_id]['action']
+                state_start_time = previous_states[track_id]['state_start_time']
+                time_since_state_start = current_time - state_start_time
+            else:
+                prev_action = None
+                state_start_time = current_time
+                time_since_state_start = 0
+            
+            # 낙상 전이 감지: (Standing/Walking) → Lying Down
+            final_action = rule_action
+            final_conf = rule_conf
+            new_state_start_time = state_start_time  # 기본값: 이전 시작 시간 유지
+            
+            # 🔴 케이스 1: Lying Down은 무조건 Fall Down으로 변경!
+            if rule_action == 'Lying Down':
+                final_action = 'Fall Down'
+                final_conf = rule_conf * 1.15
+                
+                # 처음 누운 것이면 새로운 시작 시간 기록
+                if prev_action != 'Fall Down':
+                    new_state_start_time = current_time
+                    if DEBUG_MODE:
+                        print(f"\n🚨 [FALL DETECTED!] Worker #{track_id}")
+                        print(f"   Transition: {prev_action} → Fall Down")
+                # 이미 Fall Down 상태면 시간 유지
+                else:
+                    # new_state_start_time 유지
+                    if DEBUG_MODE and frame_count % 30 == 0:
+                        print(f"[FALL SUSTAINED] Worker #{track_id} in Fall Down ({time_since_state_start:.1f}s)")
+            
+            # 🔴 케이스 2: Standing/Walking → Lying Down (빠른 전환 감지는 제거)
+            # (위에서 이미 처리됨)
+            
+            # 🔴 케이스 2: Fall Down → Standing/Walking/Sitting (회복)
+            elif prev_action == 'Fall Down' and rule_action in ['Standing', 'Walking', 'Sitting']:
+                final_action = rule_action
+                new_state_start_time = current_time  # 새로운 상태 시작!
+                if DEBUG_MODE:
+                    print(f"[RECOVERY] Worker #{track_id} recovered from Fall Down → {rule_action}")
+            
+            # 🔴 케이스 3: 상태 변경
+            elif prev_action != rule_action:
+                final_action = rule_action
+                new_state_start_time = current_time  # 새로운 상태 시작!
+            
+            # 🔴 케이스 4: 상태 유지 (timestamp 변경 없음)
+            else:
+                final_action = rule_action
+                # new_state_start_time 유지
+            
+            # 🔴 현재 상태 저장
+            previous_states[track_id] = {
+                'action': final_action,
+                'state_start_time': new_state_start_time  # 상태 시작 시간 추적
+            }
+            
+            # 디버그 출력
+            if DEBUG_MODE and frame_count % 10 == 0:
+                print(f"[DEBUG] ID:{track_id} | Final:'{final_action}'({final_conf:.2f}) | "
+                      f"Prev:'{prev_action}' | "
+                      f"Rule:'{rule_action}' | "
+                      f"H:{details.get('height', 'N/A')} | "
+                      f"R:{details.get('ratio', 'N/A')} | "
+                      f"Upper:{details.get('upper_r', 'N/A')} | "
+                      f"Lower:{details.get('lower_r', 'N/A')} | "
+                      f"VH:{details.get('vh_ratio', 'N/A')} | "
+                      f"M:{details.get('motion', 'N/A')}")
             
             # 낙상 카운터
             if track_id not in fall_counters:
                 fall_counters[track_id] = 0
+            if track_id not in fall_alerted:
+                fall_alerted[track_id] = False
             
-            if action_name in ['Fall Down', 'Lying Down'] and confidence >= FALL_CONFIDENCE_THRESHOLD:
+            if final_action in ['Fall Down'] and final_conf >= FALL_CONFIDENCE_THRESHOLD:
                 fall_counters[track_id] += 1
             else:
                 fall_counters[track_id] = 0
+                fall_alerted[track_id] = False  # 정상 상태로 돌아오면 알림 리셋
             
             # 상태 및 색상 결정
             if fall_counters[track_id] >= FALL_FRAMES:
-                action = f'{action_name}: {confidence*100:.1f}%'
+                action = f'{final_action}: {final_conf*100:.1f}%'
                 clr = (0, 0, 255)  # 🔴 확정 낙상
-                if frame_count % 30 == 0:
-                    print(f"[FALL DETECTED!] Worker #{track_id} - {action_name}")
-            elif action_name in ['Fall Down', 'Lying Down']:
-                action = f'{action_name}: {confidence*100:.1f}%'
-                clr = (0, 0, 255)  # 🔴 일시적 낙상도 빨강으로
-            elif action_name == 'Standing':
-                action = f'{action_name}: {confidence*100:.1f}%'
+                
+                # 🚨 확정 낙상 메시지 출력 (딱 한 번만!)
+                if not fall_alerted[track_id]:
+                    print(f"\n🚨 [FALL DETECTED!] Worker #{track_id} - {final_action}")
+                    print(f"   Confidence: {final_conf*100:.1f}%")
+                    print(f"   Fall frames: {fall_counters[track_id]}")
+                    fall_alerted[track_id] = True
+                    
+            elif final_action == 'Fall Down':
+                action = f'{final_action}: {final_conf*100:.1f}%'
+                clr = (0, 0, 255)  # 🔴 Fall Down (아직 확정 전)
+            elif final_action == 'Standing':
+                action = f'{final_action}: {final_conf*100:.1f}%'
                 clr = (0, 255, 0)  # 🟢 정상
-            elif action_name == 'Sitting':
-                action = f'{action_name}: {confidence*100:.1f}%'
+            elif final_action == 'Sitting':
+                action = f'{final_action}: {final_conf*100:.1f}%'
                 clr = (0, 255, 255)  # 🟡 앉음
-            elif action_name == 'Walking':
-                action = f'{action_name}: {confidence*100:.1f}%'
+            elif final_action == 'Walking':
+                action = f'{final_action}: {final_conf*100:.1f}%'
                 clr = (255, 255, 0)  # 하늘색
             else:
-                action = f'{action_name}: {confidence*100:.1f}%'
+                action = f'{final_action}: {final_conf*100:.1f}%'
                 clr = (255, 255, 255)  # ⚪ Unknown
             
             # 시각화
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, str(track_id), center,
+            cv2.putText(frame, f'ID:{track_id}', center,
                        cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 0, 0), 2)
             cv2.putText(frame, action, (x1 + 5, y1 + 20),
                        cv2.FONT_HERSHEY_COMPLEX, 0.5, clr, 2)
@@ -665,18 +879,20 @@ def main():
             if args.show_skeleton:
                 frame = draw_skeleton(frame, current_kp)
         
-        # 위험구역 경고 표시 (여러 사람 동시 표시)
+        # 위험구역 경고 표시
         if zone_warnings:
             frame = draw_zone_warnings(frame, zone_warnings)
         
         # FPS 표시
         fps = 1.0 / (time.time() - fps_time + 1e-6)
         fps_time = time.time()
-        cv2.putText(frame, f'Frame: {frame_count}, FPS: {fps:.1f}',
+        
+        info_text = f'Frame: {frame_count} | FPS: {fps:.1f} | Persons: {len(current_tracks)}'
+        cv2.putText(frame, info_text,
                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         
         # 화면 표시
-        cv2.imshow('Fall Detection + Danger Zone', frame)
+        cv2.imshow('Improved Fall Detection', frame)
         
         # 비디오 저장
         if writer:
