@@ -66,11 +66,21 @@ def get_db_connection():
 def ensure_db_connection():
     """DB 연결 확인 및 재연결 후 글로벌 CURSOR를 갱신합니다."""
     global DB_CONN, CURSOR
+    
+    # 1. 연결 객체 유효성 확인 및 재연결 시도
+    if DB_CONN is None:
+        new_conn = get_db_connection()
+        if new_conn:
+            DB_CONN = new_conn
+        else:
+            print(f"[{now_str()}] [DB-CRITICAL] DB 재연결 최종 실패.")
+            raise ConnectionError("DB connection could not be established.")
+
     try:
         # 연결이 끊어졌는지 확인하고, 끊겼다면 자동 재연결 시도
         DB_CONN.ping(reconnect=True)
     except Exception as e:
-        print(f"[{now_str()}] [DB-WARN] 기존 연결 ping 실패. 재연결 시도.")
+        print(f"[{now_str()}] [DB-WARN] 기존 연결 ping 실패. 재연결 시도: {e}")
         # ping 재연결마저 실패했거나 연결 객체 자체가 문제가 있을 경우, 
         # get_db_connection을 통해 완전히 새로운 연결을 시도
         new_conn = get_db_connection()
@@ -78,15 +88,17 @@ def ensure_db_connection():
             DB_CONN = new_conn
         else:
             print(f"[{now_str()}] [DB-CRITICAL] DB 재연결 최종 실패.")
-            raise # 치명적 오류 발생
-
-    # 🚨 DB_CONN이 재연결되었을 수 있으므로, CURSOR를 반드시 갱신해야 합니다.
+            raise ConnectionError("DB connection ping failed and could not reconnect.")
+    
+    # 2. 🚨 CURSOR 갱신/재생성 (매우 중요: 특히 재연결 시)
     try:
-        if CURSOR and CURSOR.connection != DB_CONN:
-             CURSOR.close()
-        CURSOR = DB_CONN.cursor()
+        # 기존 CURSOR가 닫혔거나 연결이 변경되었을 경우 새로 생성
+        if CURSOR is None or CURSOR.connection != DB_CONN:
+             if CURSOR:
+                 CURSOR.close()
+             CURSOR = DB_CONN.cursor()
     except Exception:
-        # CURSOR가 아직 초기화되지 않았거나 닫혔다면, 새로 생성
+        # 어떤 이유로든 CURSOR 처리에 문제 발생 시 새로 생성
         CURSOR = DB_CONN.cursor()
     
 # === 키=값; 형태의 문자열을 딕셔너리로 파싱 ===
@@ -278,8 +290,6 @@ def save_vision_data(module: str, action: str, payload_dict: dict):
             # risk_level may be under various keys
             risk_level = int(detection.get('risk_level', detection.get('level', detection.get('risk', 0))) or 0)
             description = detection.get('description') or detection.get('action') or detection.get('posture') or detection.get('zone') or ''
-            confidence = float(detection.get('confidence', detection.get('score', 0.0) or 0.0))
-            track_id = detection.get('track_id') or detection.get('id')
 
             detail_json = json.dumps(detection, ensure_ascii=False)
 
@@ -362,6 +372,8 @@ def fetch_logs(minutes=15):
     }
     
     try:
+        ensure_db_connection() # DB 연결 상태 다시 확인
+        
         # 1. 이벤트 로그 가져오기 (events 테이블)
         sql_events = """
             SELECT ts, module, action, payload
@@ -372,7 +384,7 @@ def fetch_logs(minutes=15):
         CURSOR.execute(sql_events, (minutes,)) 
         rows = CURSOR.fetchall()
         logs = [f"[{r[0]}] ({r[1]}) {r[2]} → {r[3]}" for r in rows]
-        print(f"[DB] Retrieved {len(logs)} event logs.")
+        print(f"[{now_str()}] [DB] Retrieved {len(logs)} event logs.")
 
         # 2. IMU 통계 가져오기 (imu_data 테이블)
         # 최대/최소 Roll (기울기)
@@ -398,7 +410,7 @@ def fetch_logs(minutes=15):
         latest_yaw_result = CURSOR.fetchone()
         imu_stats['latest_yaw'] = latest_yaw_result[0] if latest_yaw_result else 0.0
         
-        print("[DB] Retrieved IMU statistics.")
+        print(f"[{now_str()}] [DB] Retrieved IMU statistics.")
         
     except Exception as e:
         print(f"[DB-ERROR] Log or IMU data fetching failed: {e}")
@@ -497,82 +509,66 @@ def stt_listening_loop():
     """마이크 입력을 받고 음성을 텍스트로 변환하여 MQTT로 전송하는 독립 루프입니다."""
     r = sr.Recognizer()
     
-    # 🚨🚨🚨 수정 1: TTS 중단 로직은 루프 안으로 이동하거나, 'text'가 필요 없도록 수정해야 합니다. 
-    # STT 스레드 시작 시 TTS 중단은 비논리적이므로, 이 부분은 제거하는 것이 맞습니다.
-    # 단, TTS 재생 중 '그만 말하라'는 명령은 루프 안에서 처리해야 합니다.
-
-    # MQTT publish는 독립 스레드에서 publish.single을 사용합니다.
     mqtt_broker = BROKER
-
     auth_data = {'username': MQTT_USERNAME, 'password': MQTT_PASSWORD}
-
+    
     # ----------------------------------------------------------------------
     # TODO: [사용자 지정] 여기에 STT를 시도할 마이크 장치 인덱스를 넣어보세요.
-    # check_microphone 실행 후 출력된 목록에서 'Dummy' 장치 인덱스를 확인하세요.
     # ----------------------------------------------------------------------
     DEVICE_INDEX = None # 기본값: 시스템 기본 마이크 사용
 
-    # 마이크 설정 및 캘리브레이션 (STT 성공을 위한 try-except 블록)
+    # 마이크 스트림을 루프 바깥에서 한 번만 엽니다 (효율성 및 안정성 개선)
     try:
-        # 장치 인덱스를 명시적으로 지정하거나, None(기본값)을 사용합니다.
+        # sr.Microphone을 with 블록으로 감싸서 스트림을 한 번만 열고, 루프 내에서 재사용합니다.
         with sr.Microphone(device_index=DEVICE_INDEX, sample_rate=16000) as source:
             print("[STT-THREAD] Ambient noise calibrating...")
             r.adjust_for_ambient_noise(source, duration=1.5)
             print("[STT-THREAD] Setup complete. Starting speech recognition loop...")
-    
-    except Exception as e:
-        # 초기화 중 치명적인 오류 발생 (예: Errno -9999)
-        # ... (이전 코드와 동일한 오류 처리 로직 유지)
-        print(f"[CRITICAL] STT Initialization Error (Microphone): {e}")
-        return 
-
-    while True:
-        try:
-            # 장치 인덱스를 루프 내부에서도 명시적으로 지정하여 사용합니다.
-            with sr.Microphone(device_index=DEVICE_INDEX, sample_rate=16000) as source:
+            
+            # 메인 리스닝 루프
+            while True:
                 print("\n[STT-THREAD] Listening for command (Say '최근 N분 요약해줘')...")
-                # 음성 인식 대기 (최대 10초 발화 길이 제한)
+                # r.listen()은 이미 source가 열려있는 상태에서 작동합니다.
                 audio = r.listen(source, timeout=None, phrase_time_limit=10) 
-            
-            print("[STT-THREAD] Recognizing speech...")
-            # 구글 STT를 사용하여 한국어(ko-KR)로 인식
-            text = r.recognize_google(audio, language="ko-KR") 
-            print("[STT-THREAD] You said:", text)
+                
+                print("[STT-THREAD] Recognizing speech...")
+                text = r.recognize_google(audio, language="ko-KR") 
+                print("[STT-THREAD] You said:", text)
 
-            # '그만 말하라' 명령에 대한 TTS 중단 로직 추가
-            stop_keywords = ["그만", "멈춰", "중단", "정지", "닥쳐"]
-            if any(keyword in text for keyword in stop_keywords):
-                 with TTS_LOCK:
-                    if TTS_PROCESS and TTS_PROCESS.poll() is None:
-                        TTS_PROCESS.terminate()
-                        TTS_PROCESS.wait()
-                        print("[STT-THREAD] 🛑 TTS playback terminated by voice command.")
-                        # TTS 중단 명령만 수행하고 루프를 다시 시작합니다.
-                        continue 
+                # TTS Stop Logic
+                stop_keywords = ["그만", "멈춰", "중단", "정지", "닥쳐"]
+                if any(keyword in text for keyword in stop_keywords):
+                     with TTS_LOCK:
+                        if TTS_PROCESS and TTS_PROCESS.poll() is None:
+                            TTS_PROCESS.terminate()
+                            TTS_PROCESS.wait()
+                            print("[STT-THREAD] 🛑 TTS playback terminated by voice command.")
+                            continue 
 
-            # 'text' 변수가 인식된 후에 parse_speech_command 호출
-            topic, payload = parse_speech_command(text)
-            
-            # MQTT 전송
-            # ... (이후 MQTT publish 로직은 이전 코드와 동일하게 유지)
-            try:
-                publish.single(topic,
-                               payload=payload,
-                               hostname=mqtt_broker,
-                               qos=1,
-                               auth=auth_data)
-                print(f"[STT-THREAD] MQTT Published: {topic} -> {payload}")
-                save_event_log("STT", "COMMAND", text)
-            except Exception as e:
-                print(f"[STT-THREAD] MQTT publish error: {e}")
+                topic, payload = parse_speech_command(text)
+                
+                # MQTT 전송
+                try:
+                    publish.single(topic,
+                                   payload=payload,
+                                   hostname=mqtt_broker,
+                                   qos=1,
+                                   auth=auth_data)
+                    print(f"[STT-THREAD] MQTT Published: {topic} -> {payload}")
+                    # DB 직접 접근 (save_event_log) 제거 - 메인 스레드의 on_message에서 처리함
+                except Exception as e:
+                    print(f"[STT-THREAD] MQTT publish error: {e}")
 
-        except sr.UnknownValueError:
-            print("[STT-THREAD] Google Speech Recognition could not understand audio.")
-        except sr.RequestError as e:
-            print(f"[STT-THREAD] Could not request results from Google Speech Recognition service; {e}")
-        except Exception as e:
-            print(f"[STT-THREAD] An unexpected error occurred in STT loop: {e}")
-            time.sleep(1)
+                time.sleep(0.1) # 루프 안정화
+
+    except sr.UnknownValueError:
+        print("[STT-THREAD] Google Speech Recognition could not understand audio.")
+    except sr.RequestError as e:
+        print(f"[STT-THREAD] Could not request results from Google Speech Recognition service; {e}")
+    except Exception as e:
+        # 초기화 실패 또는 루프 내부의 예상치 못한 치명적 오류 (e.g., 오디오 장치 유실)
+        print(f"[CRITICAL] STT Loop or Initialization Error: {e}")
+        time.sleep(1) # 오류 발생 시 잠시 대기 후 종료
 
 # === MQTT 콜백 함수 (메인 로직) ===
 def on_connect(client, userdata, flags, rc):
@@ -582,9 +578,9 @@ def on_connect(client, userdata, flags, rc):
         # TOPIC_BASE와 COMMAND_TOPIC을 사용하여 구독
         client.subscribe(TOPIC_BASE + "#") 
         client.subscribe("command/#") # 모든 command/ 토픽 구독 (summary, query 포함)
-        print(f"[SUB] Subscribed to {TOPIC_BASE}# and command/#")
+        print(f"[{now_str()}] [SUB] Subscribed to {TOPIC_BASE}# and command/#")
     else:
-        print("[FAIL] Connection failed, code:", rc)
+        print(f"[{now_str()}] [FAIL] Connection failed, code: {rc}")
 
 # === [데이터 라우터] 핵심 로직 ===
 
@@ -621,7 +617,7 @@ def process_and_save_data(msg):
     else:
         # too short: ignore unless it's a command topic handled elsewhere
         if not topic.startswith("command/"):
-            print(f"[WARN] Skipping short or unknown topic: {topic}")
+            print(f"[{now_str()}] [WARN] Skipping short or unknown topic: {topic}")
         return
 
     # =======================================================
@@ -687,22 +683,23 @@ def on_message(client, userdata, msg):
         if topic == "command/summary":
             print(f"[{now}] [CMD] Summary request received → Generating report...")
             
+            # Summary 요청이 들어왔음을 이벤트 로그에 기록
+            minutes_payload = payload.strip()
+            save_event_log("USER_STT", "SUMMARY_REQUEST", f"Request for summary (Payload: {minutes_payload})")
+
             minutes = 15 # 기본값은 15분
             try:
                 # payload는 '30'과 같은 문자열 분 단위이거나 'minutes=30' 형태
-                minutes = int(payload.strip())
+                minutes = int(minutes_payload)
             except ValueError:
-                # payload가 단순 숫자가 아닐 경우 무시하고 기본값 15분 유지
-                pass 
+                pass # payload가 단순 숫자가 아닐 경우 무시하고 기본값 15분 유지
             
             # 최소 1분 이상, 최대 180분(3시간)까지만 처리하도록 제한 (안전성 확보)
             minutes = max(1, min(minutes, 180)) 
 
-            # 추출된 minutes 값으로 로그와 IMU 통계를 함께 가져옵니다.
             print(f"[{now}] Fetching logs for the last {minutes} minutes.")
             logs, imu_stats = fetch_logs(minutes) 
             
-            # minutes 값을 summarize_logs 함수에 전달합니다.
             summary = summarize_logs(logs, imu_stats, minutes) 
             text_to_speech(summary)
             # LLM 결과 TTS 발화 후 DB에 기록
@@ -711,11 +708,13 @@ def on_message(client, userdata, msg):
         elif topic == "command/query":
              # 일반 쿼리는 LLM에 바로 질의 후 답변을 TTS로 발화합니다.
              print(f"[{now}] [CMD] Query request received → {payload}")
+             # 사용자 쿼리를 이벤트 로그에 기록
              save_event_log("USER_STT", "QUERY", payload)
              
              # LLM 질의
              response = query_llm(payload)
              text_to_speech(response)
+             # LLM 답변을 이벤트 로그에 기록
              save_event_log("LLM", "RESPONSE", response)
 
         return
@@ -733,41 +732,48 @@ client.username_pw_set(username=MQTT_USERNAME, password=MQTT_PASSWORD)
 client.on_connect = on_connect
 client.on_message = on_message
 
-# === 브로커 연결 ===
-print("[INFO] Connecting to broker...")
-client.connect(BROKER, PORT, 60)
-
-# === 루프 ===
+# === 서버 실행 및 루프 ===
+# 메인 루프를 try 블록으로 감싸서 종료 시 DB/MQTT 자원 정리 보장
 try:
-    # 1. STT 리스닝 스레드 시작
-    
-    # STT 스레드를 시작하기 전에 오디오 테스트를 실행하여 장치 인덱스 정보를 얻습니다.
-    # check_microphone 내부에서 오디오 장치 목록(list_audio_devices)을 출력합니다.
+    # 1. 브로커 연결
+    print("[INFO] Connecting to broker...")
+    client.connect(BROKER, PORT, 60)
+
+    # 2. STT/TTS 기능 테스트 및 스레드 시작
     stt_recognizer = sr.Recognizer()
-    
-    # 오디오 테스트는 마이크 스트림을 여는 데 실패하면 자동으로 장치 목록을 출력합니다.
     microphone_test_result = check_microphone(stt_recognizer)
     
     if microphone_test_result:
-        # 마이크 테스트에 성공했거나, 루프를 시도할 수 있는 상태일 경우에만 스레드를 시작합니다.
         stt_thread = threading.Thread(target=stt_listening_loop)
         stt_thread.daemon = True # 메인 스레드 종료 시 함께 종료
         stt_thread.start()
+        print("[INFO] STT Listening Thread started.")
     else:
         print("\n[WARN] 마이크 초기화 실패로 STT/TTS 기능 스레드는 시작되지 않았습니다.")
-        print("       출력된 장치 목록을 확인하고, 코드의 DEVICE_INDEX를 수동으로 설정해보세요.")
 
-
-    # 2. 스피커 테스트 (TTS 기능 확인)
+    # 3. 스피커 테스트 (TTS 기능 확인)
     check_speaker()
     
-    # 3. 메인 MQTT 루프 실행 (STT와 동시 실행)
+    # 4. 메인 MQTT 루프 실행 (STT와 동시 실행)
+    print("[INFO] Server is running. Entering MQTT loop_forever(). Press Ctrl+C to stop.")
     client.loop_forever()
     
 except KeyboardInterrupt:
     # Ctrl+C가 눌렸을 때 깔끔하게 종료
-    print("\n[EXIT] Server is stopping gracefully...")
+    print("\n[EXIT] Server is stopping gracefully (KeyboardInterrupt)...")
+except Exception as e:
+    # 예상치 못한 치명적 오류 처리 (예: MQTT 연결 실패, 초기화 오류 등)
+    print(f"\n[CRITICAL-ERROR] Server stopped due to unexpected error: {e}")
+
+finally:
+    # 5. 자원 정리 (정상 종료, 키보드 인터럽트, 또는 치명적 오류 발생 시 모두 실행)
+    print("[EXIT] Cleaning up resources...")
     client.disconnect()
-    CURSOR.close() 
-    DB_CONN.close()
+    
+    # 전역 변수가 정의되어 있는지 확인 후 닫습니다.
+    if 'CURSOR' in globals() and CURSOR:
+        CURSOR.close() 
+    if 'DB_CONN' in globals() and DB_CONN:
+        DB_CONN.close()
+    
     print("[EXIT] Server stopped successfully.")
