@@ -1,7 +1,7 @@
 import paho.mqtt.client as mqtt
 import cv2
 import numpy as np
-from openvino.runtime import Core # OpenVINO 런타임 Core로 명시적으로 변경
+from openvino.runtime import Core
 import torch
 import torch.nn as nn
 from PIL import Image
@@ -11,15 +11,32 @@ import time
 import sys
 import json 
 from datetime import datetime, timezone
+import base64
+
+# ====================================================
+# 0. 고정 카메라 할당을 위한 모듈 임포트
+# ====================================================
+# find_camera_by_vid_pid 함수를 임포트합니다.
+from camera_init_robust import find_camera_by_vid_pid 
 
 # ====================================================
 # 1. 환경 설정 및 상수 정의
 # ====================================================
 
 # MQTT 설정
-BROKER = "10.10.14.73" # 브로커 주소를 사용자의 환경에 맞게 설정하세요
+BROKER = "10.10.14.73"
 PORT = 1883
 TOPIC_BASE = "project/vision" # 토픽 접두사
+
+# 🚨🚨 AD_USER 인증 정보 추가 🚨🚨
+MQTT_USERNAME = "AD_USER"      # 등록된 AD 사용자 이름
+MQTT_PASSWORD = "sksk"  # 등록된 AD 사용자 비밀번호 (실제 값으로 변경 필요)
+
+# AD 모듈 명확히 지정 및 토픽 분리
+AD_MODULE = "AD"
+RAW_TOPIC = TOPIC_BASE + "/" + AD_MODULE + "/RAW"
+ALERT_TOPIC = TOPIC_BASE + "/" + AD_MODULE + "/ALERT" # 경고 토픽도 AD 전용으로 분리
+AD_VIDEO_TOPIC = "project/vision/AD/VIDEO" # 시연용 비디오 스트림 토픽
 
 def now_str():
     """ISO 8601 형식의 현재 UTC 시각을 반환합니다."""
@@ -35,7 +52,7 @@ det_bin = "models/Detection.bin"
 cls_xml = "models/Classification.xml"
 cls_bin = "models/Classification.bin"
 
-DEPLOYMENT_FILE = "models/deployed_obstacle_detector.pt"  # PyTorch Anomaly Detection TorchScript 모델
+DEPLOYMENT_FILE = "models/deployed_obstacle_detector.pt"
 
 ALL_MODEL_PATHS = [det_xml, det_bin, cls_xml, cls_bin, DEPLOYMENT_FILE]
 for path in ALL_MODEL_PATHS:
@@ -74,7 +91,7 @@ inference_transforms = transforms.Compose([
 # =======================
 # 4. 유틸리티 함수 (NMS, IoU, Preprocessing)
 # =======================
-
+    
 def nms(boxes, scores, score_threshold=0.5, iou_threshold=0.5):
     """Non-Maximum Suppression"""
     if not boxes: return [], []
@@ -93,8 +110,14 @@ def iou(box1, box2):
     xi1 = max(x1, x2)
     yi1 = max(y1, y2)
     xi2 = min(x1 + w1, x2 + w2)
-    yi2 = min(y1 + h1, y2 + h2)
+    yi2 = min(y1 + h1, y2 + h1) # Fix: box2 height was h2, corrected to h2+y2 and min(y1+h1, y2+h2) for correct IoU calculation (Original code used w/h in list)
     
+    # Re-calculate Intersection based on original [x, y, w, h] format assumed by input
+    xi1 = max(x1, x2)
+    yi1 = max(y1, y2)
+    xi2 = min(x1 + w1, x2 + w2)
+    yi2 = min(y1 + h1, y2 + h2)
+
     inter_area = max(0, xi2 - xi1) * max(0, yi2 - yi1)
     union_area = w1 * h1 + w2 * h2 - inter_area
     return inter_area / union_area if union_area > 0 else 0
@@ -115,16 +138,19 @@ def dehaze(image):
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
     dark_channel = cv2.erode(min_channel, kernel)
     A = np.max(dark_channel)
+    # 0으로 나누는 것을 방지
+    A = A if A > 0 else 255
     t = 1 - 0.95 * dark_channel / A
     t = np.clip(t, 0.1, 1)
     J = np.empty_like(image, dtype=np.float32)
     for c in range(3):
+        # t가 0.1보다 작지 않으므로 안전하게 나눗셈 수행
         J[:,:,c] = (image[:,:,c].astype(np.float32) - A) / t + A
     J = np.clip(J, 0, 255).astype(np.uint8)
     return J
 
 # =======================
-# 5. 초기화 함수 (모든 모델 로드)
+# 5. 초기화 함수 (모든 모델 로드 및 카메라 초기화)
 # =======================
 
 def initialize_vision():
@@ -134,14 +160,13 @@ def initialize_vision():
     global cls_h, cls_w, cap, deployed_model
     
     try:
-        # OpenVINO Detection
+        # OpenVINO 모델 로드
         det_model = ie.read_model(det_xml, det_bin)
         det_compiled = ie.compile_model(det_model, "CPU")
         det_input_layer = det_compiled.input(0)
         det_output_layer = det_compiled.output(0)
         print(f"[{now_str()}] ✅ OpenVINO Detection 모델 로드 완료.")
 
-        # OpenVINO Classification
         cls_model = ie.read_model(cls_xml, cls_bin)
         cls_compiled = ie.compile_model(cls_model, "CPU")
         cls_input_layer = cls_compiled.input(0)
@@ -149,60 +174,54 @@ def initialize_vision():
         _, _, cls_h, cls_w = cls_input_layer.shape
         print(f"[{now_str()}] ✅ OpenVINO Classification 모델 로드 완료.")
 
-        # PyTorch Anomaly Detection (TorchScript)
         deployed_model = torch.jit.load(DEPLOYMENT_FILE, map_location='cpu')
         deployed_model.eval()
         print(f"[{now_str()}] ✅ PyTorch Anomaly 모델 로드 완료.")
 
-        # 웹캠 열기: **카메라 초기화 다중 시도 로직 (특수 인덱스 -1 추가)**
-        # -1 인덱스를 추가하여 특정 Linux 환경 및 CSI 카메라를 위한 fallback을 시도합니다.
+        # 카메라 초기화: 고유 ID 기반 인덱스 검색
+        print(f"[{now_str()}] INFO System :: AD 카메라 고유 ID 기반 인덱스 검색 중...")
         
-        # --- [!!! 카메라 인덱스 시도 목록: -1, 0-9번 인덱스 및 V4L2/ANY 백엔드 시도 !!!] ---
-        capture_attempts = [
-            (-1, 0), # 1. 특수 인덱스 -1 시도 (CSI 또는 일부 리눅스 기본 카메라 fallback)
-            (0, cv2.CAP_V4L2), (1, cv2.CAP_V4L2), (2, cv2.CAP_V4L2), # V4L2 우선 시도
-            (0, cv2.CAP_ANY),  (1, cv2.CAP_ANY), (2, cv2.CAP_ANY),  # ANY 백엔드 시도 
-            (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0), (9, 0) # 더 넓은 인덱스 범위 시도
-        ]
-        # --------------------------------------------------------
+        # AD 인덱스만 추출하고, PE 인덱스는 무시합니다.
+        AD_CAMERA_INDEX, _ = find_camera_by_vid_pid()
         
-        cap = None
-        for index, api_preference in capture_attempts:
-            if api_preference != 0:
-                cap = cv2.VideoCapture(index, api_preference)
-            else:
-                cap = cv2.VideoCapture(index)
+        if AD_CAMERA_INDEX == -1:
+            raise RuntimeError("AD 카메라 (VID:PID)를 찾을 수 없습니다. 연결 상태를 확인하거나 camera_init_robust.py의 설정을 확인하세요.")
 
-            if cap.isOpened():
-                # **해상도 및 속성 설정:** 안정적인 캡처를 위해 해상도를 명시적으로 설정합니다.
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                cap.set(cv2.CAP_PROP_FPS, 30)
-                
-                print(f"[{now_str()}] ✅ 웹캠 열기 성공: 인덱스 {index}, 백엔드 {api_preference}")
-                break # 성공하면 루프 종료
+        print(f"[{now_str()}] ✅ AD 카메라 고정 인덱스 확보: {AD_CAMERA_INDEX}")
+        
+        # 확보된 인덱스로 카메라를 엽니다.
+        cap = cv2.VideoCapture(AD_CAMERA_INDEX)
+
+        if cap.isOpened():
+            # 해상도 및 속성 설정
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, 30)
             
-        if cap is None or not cap.isOpened():
-            # 최종적으로 실패하면 오류 발생
-            raise RuntimeError("웹캠을 열 수 없습니다. 모든 인덱스와 백엔드 시도 실패. 하드웨어 연결 및 드라이버 상태를 확인하세요.")
+            print(f"[{now_str()}] ✅ 웹캠 열기 성공: 인덱스 {AD_CAMERA_INDEX}")
+        else:
+             # cv2.VideoCapture가 인덱스에 실패하면 오류 발생
+            raise RuntimeError(f"웹캠 인덱스 {AD_CAMERA_INDEX}를 열 수 없습니다.")
         
     except Exception as e:
         print(f"[{now_str()}] ❌ CRITICAL: 초기화 실패 - {e}")
         sys.exit(1)
 
 
-# =======================
-# 6. 메인 추론 및 발행 함수
-# =======================
+# ====================================================
+# 6. 메인 추론 및 발행 함수 (시각화 및 스트리밍 로직 추가)
+# ====================================================
 
 def run_inference_and_publish(client):
     """
     1. 이미지 캡처 및 전처리 (저조도 개선, Dehazing)
-    2. OpenVINO Detection/Classification
-    3. PyTorch Anomaly Detection
-    4. MQTT로 결과 발행
+    2. OpenVINO Detection/Classification & PyTorch Anomaly Detection
+    3. 시각화 및 비디오 스트림 발행 (AD_VIDEO_TOPIC)
+    4. MQTT로 RAW/ALERT 데이터 발행
     """
     global last_frame_boxes
+    
+    start_time = time.time() # FPS 측정 시작
     
     # 1. 프레임 캡처
     ret, frame = cap.read()
@@ -220,7 +239,8 @@ def run_inference_and_publish(client):
     # --------------------------
     # 2) OpenVINO Detection (장애물 감지)
     # --------------------------
-    resized = cv2.resize(dehazed, (640, 640))
+    # OpenVINO 모델 입력 크기 (640x640)에 맞게 리사이즈
+    resized = cv2.resize(dehazed, (640, 640)) 
     # OpenVINO 입력 형태: BxCxHxW
     input_image = np.expand_dims(resized.transpose(2, 0, 1), 0).astype(np.float32)
     det_results = det_compiled([input_image])[det_output_layer][0]
@@ -230,7 +250,7 @@ def run_inference_and_publish(client):
         # OpenVINO 출력 포맷에 따라 (x_min, y_min, x_max, y_max, conf)
         x_min, y_min, x_max, y_max, conf = det
         if conf > 0.5:
-            # 원본 이미지 크기로 좌표 복원
+            # 원본 이미지 크기(480x640)로 좌표 복원
             x_min = int(x_min / 640 * dehazed.shape[1])
             y_min = int(y_min / 640 * dehazed.shape[0])
             x_max = int(x_max / 640 * dehazed.shape[1])
@@ -262,6 +282,7 @@ def run_inference_and_publish(client):
     # --------------------------
     detections = []
     anomaly_detected = False
+    critical_ship_detected = False # 🚨 CRITICAL 충돌 위험을 유발할 수 있는 배 감지
     
     for (x, y, w, h) in smoothed_boxes:
         # Classification을 위한 영역 추출
@@ -277,13 +298,17 @@ def run_inference_and_publish(client):
         class_id = int(np.argmax(cls_result))
         score_cls = float(np.max(cls_result))
         label_name = class_names[class_id]
+        
+        # 🚨 일반 'Ship'을 감지했을 때 충돌 위험으로 판단 (임시 로직)
+        if label_name in ['Ship']: 
+             critical_ship_detected = True
 
         # Anomaly Detection (PyTorch) - 탐지된 객체 영역에만 적용
         pil_crop = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
         input_tensor = inference_transforms(pil_crop).unsqueeze(0).to('cpu')
         
         with torch.no_grad():
-            # anomaly_score는 TorchScript 모델의 출력에 따라 수정이 필요할 수 있습니다.
+            # anomaly_score는 0~1 사이의 값으로, 높을수록 이상(anomaly)으로 간주
             anomaly_score = deployed_model(input_tensor).item() 
         
         is_anomaly = anomaly_score > OPTIMAL_THRESHOLD
@@ -299,41 +324,103 @@ def run_inference_and_publish(client):
         })
 
     # --------------------------
-    # 5) MQTT 발행
+    # 4-1) 시각화: 바운딩 박스 그리기
+    # --------------------------
+    visual_frame = dehazed.copy()
+    for d in detections:
+        x, y, w, h = d['box']
+        label = f"{d['object_type']}"
+        score_text = f"C:{d['confidence']:.2f}"
+        
+        if d['anomaly']:
+            label += " (Anomaly!)"
+            color = (0, 0, 255) # 빨강 (Anomaly)
+        elif d['object_type'] == 'Ship':
+            color = (0, 165, 255) # 주황 (Ship/Critical)
+        else:
+            color = (0, 255, 0) # 초록 (정상 객체)
+            
+        cv2.rectangle(visual_frame, (x, y), (x + w, y + h), color, 2)
+        cv2.putText(visual_frame, label, (x, y - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        cv2.putText(visual_frame, score_text, (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+
+    # --------------------------
+    # 5) 비디오 스트림 발행 (AD_VIDEO_TOPIC)
+    # --------------------------
+    try:
+        # 프레임 압축 (JPEG) 및 Base64 인코딩
+        ret_enc, buffer = cv2.imencode('.jpg', visual_frame, [cv2.IMWRITE_JPEG_QUALITY, 50]) 
+        
+        if ret_enc:
+            # JPEG 바이트를 Base64 문자열로 변환
+            jpg_as_text = base64.b64encode(buffer.tobytes())
+            
+            # 새로운 VIDEO 토픽으로 발행 (QoS 0)
+            client.publish(AD_VIDEO_TOPIC, jpg_as_text, qos=0)
+            
+            # 발행 로그
+            end_time = time.time()
+            fps = 1.0 / (end_time - start_time + 1e-6)
+            print(f"[{now_str()}] [PUB-AD-VIDEO] ✅ Visual frame sent (FPS: {fps:.1f}) (Size: {len(jpg_as_text)/1024:.1f} KB)")
+        else:
+            print(f"[{now_str()}] [WARNING] ❌ JPEG encoding failed.")
+            
+    except Exception as e:
+        print(f"[{now_str()}] [ERROR] ❌ Video streaming publish failed: {e}")
+
+    # --------------------------
+    # 6) MQTT 데이터 발행 (RAW/ALERT)
     # --------------------------
     
-    # 5-1. 기본 RAW 데이터 (모든 탐지 결과 포함)
-    # 서버의 save_vision_data(action, payload_dict) 요구사항을 맞추기 위해 topic_base 및 action 필드를 추가합니다.
+    # 6-1. 기본 RAW 데이터 (모든 탐지 결과 포함)
     raw_data = {
         "timestamp": now_str(),
+        "module": AD_MODULE, 
+        "level": "INFO",     
         "detections": detections,
         "total_count": len(detections),
         "anomaly_count": sum(1 for d in detections if d['anomaly']),
-        "topic_base": TOPIC_BASE, # 서버 요구사항 충족
-        "action": "RAW"           # 서버 요구사항 충족
     }
     raw_payload = json.dumps(raw_data)
-    client.publish(f"{TOPIC_BASE}/RAW", raw_payload, qos=0)
-    print(f"[{now_str()}] INFO PUB :: {TOPIC_BASE}/RAW → Sent {len(detections)} detections.")
+    client.publish(RAW_TOPIC, raw_payload, qos=0)
+    # 시연용 로그: RAW 데이터 발행 
+    
+    # 6-2. 경고 이벤트 (Anomaly나 중요 객체 감지 시)
+    if anomaly_detected or critical_ship_detected:
+        
+        # 레벨 및 메시지 결정 로직
+        if anomaly_detected or critical_ship_detected:
+            # 이상 징후나 충돌 위험(Ship 감지)이 있으면 CRITICAL
+            alert_level = "CRITICAL"
+            anomaly_count = sum(1 for d in detections if d['anomaly'])
+            summary_parts = []
+            if critical_ship_detected: summary_parts.append("선박 충돌 위험")
+            if anomaly_count > 0: summary_parts.append(f"{anomaly_count}개 이상 징후")
+            
+            alert_summary = f"🚨 긴급! {', '.join(summary_parts)} 감지."
+            
+        elif any(d['object_type'] in ['Reef'] for d in detections): # Reef는 WARNING으로 처리
+            alert_level = "WARNING"
+            alert_summary = f"⚠️ 항해 주의! 암초(Reef) 감지됨."
+        else:
+            # CRITICAL도 WARNING도 아니면 발행하지 않음 (예: 단순 Lighthouse)
+            time.sleep(0.01) # CPU 점유율 관리
+            return 
 
-    # 5-2. 경고 이벤트 (Anomaly나 중요 객체 감지 시)
-    if anomaly_detected or any(d['object_type'] in ['Ship', 'Animal'] for d in detections):
-        
-        alert_summary = f"위험 감지: 총 {len(detections)}개 객체 중 {sum(1 for d in detections if d['anomaly'])}개가 이상 징후."
-        
         alert_data = {
-            "level": 5 if anomaly_detected else 3,
+            "timestamp": now_str(),
+            "module": AD_MODULE, 
+            "level": alert_level, 
             "message": alert_summary,
-            "details": [d for d in detections if d['anomaly'] or d['object_type'] in ['Ship', 'Animal']],
-            "topic_base": TOPIC_BASE, # 서버 요구사항 충족
-            "action": "ALERT"         # 서버 요구사항 충족
+            "details": [d for d in detections if d['anomaly'] or d['object_type'] in ['Ship', 'Reef']],
         }
         alert_payload = json.dumps(alert_data)
-        client.publish(f"{TOPIC_BASE}/ALERT", alert_payload, qos=1) # QOS 1로 중요 경고 전송
-        print(f"[{now_str()}] ⚠️ ALERT PUB :: {TOPIC_BASE}/ALERT → {alert_summary}")
+        client.publish(ALERT_TOPIC, alert_payload, qos=1)
+        # 시연용 로그: 경고 발행
+        print(f"[{now_str()}] 📢 {alert_level} PUB :: {ALERT_TOPIC} → {alert_summary}")
         
     
-    time.sleep(0.5) # 0.5초당 1회 추론 및 발행 (약 2 FPS)
+    time.sleep(0.01) # 0.01초 대기 (CPU 점유율 관리)
 
 
 # ====================================================
@@ -345,14 +432,25 @@ def main():
     initialize_vision()
 
     # 2. MQTT 클라이언트 생성 및 연결
-    client = mqtt.Client()
+    # Fix: MQTTv311 프로토콜 명시로 DeprecationWarning 해결
+    client = mqtt.Client(client_id="AD_Client", protocol=mqtt.MQTTv311) 
+
+    # 사용자 이름 및 비밀번호 설정
+    client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+
+    def on_connect(client, userdata, flags, rc):
+        if rc == 0:
+            print(f"[{now_str()}] INFO MQTT :: Client connected successfully (RC: {rc})")
+        else:
+            print(f"[{now_str()}] ❌ CRITICAL: MQTT Connection failed (RC: {rc})")
+            sys.exit(1)
+            
+    client.on_connect = on_connect # 콜백 설정
+    
     try:
-        # DeprecationWarning 제거: Callback API version 1 is deprecated, update to latest version
-        # paho-mqtt의 최신 버전은 context managers나 loop_forever()를 권장하지만, 
-        # 기존 코드 스타일 유지를 위해 warning은 무시하고 진행합니다.
         client.connect(BROKER, PORT, 60)
         client.loop_start() 
-        print(f"[{now_str()}] INFO MQTT :: Client connected to {BROKER}:{PORT}")
+        print(f"[{now_str()}] INFO MQTT :: Client attempting connection to {BROKER}:{PORT}")
     except Exception as e:
         print(f"[{now_str()}] ❌ CRITICAL: MQTT 연결 실패: {e}")
         sys.exit(1)
@@ -365,7 +463,7 @@ def main():
             run_inference_and_publish(client)
             
     except KeyboardInterrupt:
-        print(f"\n[{now_str()}] INFO System :: Vision client stopped by user.")
+        print(f"\n[{now_str()}] INFO System :: Vision client stopped by user (Ctrl+C).")
     except Exception as e:
         print(f"\n[{now_str()}] ❌ ERROR System :: An unexpected error occurred: {e}")
     finally:
@@ -378,4 +476,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
