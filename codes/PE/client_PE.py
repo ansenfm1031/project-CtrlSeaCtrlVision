@@ -9,6 +9,8 @@ from ultralytics import YOLO
 import paho.mqtt.client as mqtt
 import json
 from datetime import datetime, timezone
+import base64
+
 # ====================================================
 # 0. 고정 카메라 할당을 위한 모듈 임포트 (수정된 부분 1/2)
 # camera_init_robust.py 파일이 이 스크립트와 같은 경로에 있어야 합니다.
@@ -26,6 +28,7 @@ TOPIC_BASE = "project/vision"
 PE_MODULE = "PE"
 RAW_TOPIC = TOPIC_BASE + "/" + PE_MODULE + "/RAW"
 ALERT_TOPIC = TOPIC_BASE + "/" + PE_MODULE + "/ALERT" # 경고 토픽도 AD 전용으로 분리
+PE_VIDEO_TOPIC = "project/vision/PE/VIDEO" # 시연용 비디오 스트림 토픽
 
 def now_str():
     """ISO 8601 형식의 현재 UTC 시각을 반환합니다."""
@@ -64,7 +67,6 @@ RAW_PUBLISH_INTERVAL = 15
 
 # ============================================
 # MoveNet 포즈 추정 모델
-# (기존 코드와 동일)
 # ============================================
 class MoveNetPose:
     """MoveNet Thunder - 라즈베리파이5 최적화"""
@@ -170,7 +172,6 @@ class MoveNetPose:
 
 # ============================================
 # 4. 룰 기반 낙상 감지 및 유틸리티 함수
-# (기존 코드와 동일)
 # ============================================
 def estimate_motion(prev_kp, curr_kp):
     """평균 키포인트 이동량 (걷기 인식용)"""
@@ -245,7 +246,7 @@ def get_body_aspect_ratio(keypoints):
 
 
 def detect_fall_rule_based(keypoints, prev_keypoints=None):
-    """향상된 룰 기반 상태 인식 (기존 코드 유지)"""
+    """향상된 룰 기반 상태 인식"""
     
     angle = calculate_body_angle(keypoints)
     ratio = get_body_aspect_ratio(keypoints)
@@ -331,7 +332,6 @@ def draw_zone_warnings(frame, zone_warnings):
 
 # ============================================
 # 간단한 트래커 (IoU 기반)
-# (기존 코드와 동일)
 # ============================================
 
 class SimpleTracker:
@@ -401,7 +401,6 @@ class SimpleTracker:
 
 # ============================================
 # YOLOv8 검출기
-# (기존 코드와 동일)
 # ============================================
 
 class YOLOv8_Detector:
@@ -667,6 +666,24 @@ def main():
                     "y_bottom": bottom_y,
                     "in_danger_zone": in_zone
                 })
+            
+            try:
+                # 프레임 압축 (JPEG) 및 Base64 인코딩
+                ret_enc, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 50]) 
+                
+                if ret_enc:
+                    jpg_as_text = base64.b64encode(buffer.tobytes())
+                    
+                    # 새로운 VIDEO 토픽 (PE_VIDEO_TOPIC)으로 발행 (QoS=0)
+                    mqtt_client.publish(PE_VIDEO_TOPIC, jpg_as_text, qos=0) 
+                    
+                    if DEBUG_MODE:
+                        # 발행 로그: DEBUG_MODE일 때만 출력
+                        print(f"[{now_str()}] [PUB-PE-VIDEO] ✅ Base64 frame sent to {PE_VIDEO_TOPIC} (Size: {len(jpg_as_text)/1024:.1f} KB)")
+                
+            except Exception as e:
+                print(f"[{now_str()}] [ERROR] ❌ PE Video streaming publish failed: {e}")
+            # ===============================================================================
             
             # 4. RAW 데이터 발행 (주기적으로)
             if frame_count % RAW_PUBLISH_INTERVAL == 0 and is_person_detected:
