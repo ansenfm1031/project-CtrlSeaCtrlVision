@@ -34,7 +34,7 @@ MQTT_USERNAME = "PE_USER"      # 등록된 AD 사용자 이름
 MQTT_PASSWORD = "sksk"  # 등록된 AD 사용자 비밀번호 (실제 값으로 변경 필요)
 
 # 모듈 이름 및 토픽 설정
-FALL_MODULE = "FALL"
+FALL_MODULE = "PE"
 RAW_TOPIC = TOPIC_BASE + "/" + FALL_MODULE + "/RAW"
 ALERT_TOPIC = TOPIC_BASE + "/" + FALL_MODULE + "/ALERT"
 FALL_VIDEO_TOPIC = "project/vision/FALL/VIDEO"  # 비디오 스트림 토픽
@@ -46,7 +46,7 @@ def now_str():
 # ============================================
 # 설정
 # ============================================
-DEBUG_MODE = False  # True로 하면 상세 로그
+DEBUG_MODE = True  # True로 하면 상세 로그
 
 # 위험구역 설정
 USE_RATIO = False
