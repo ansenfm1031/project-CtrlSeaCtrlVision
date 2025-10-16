@@ -59,7 +59,7 @@ def get_db_connection():
         )
         return db
     except Exception as e:
-        print(f"[DB-ERROR] 연결 실패: {e}")
+        print(f"[{now_str()}] [DB-ERROR] 연결 실패: {e}")
         return None
     
 # DB 연결 확인 및 재연결 함수
@@ -184,8 +184,6 @@ def check_microphone(r: sr.Recognizer):
     
     # --------------------------------------------------------------------------------
     # TODO: [사용자 지정] 여기에 STT를 시도할 마이크 장치 인덱스를 넣어보세요.
-    # 이전 단계에서 출력된 목록에서 'Dummy'나 실제 마이크 인덱스를 확인 후 여기에 입력합니다.
-    # 예시: DEVICE_INDEX = 3
     # --------------------------------------------------------------------------------
     DEVICE_INDEX = None # 기본값: 시스템 기본 마이크 사용
 
@@ -509,6 +507,12 @@ def stt_listening_loop():
     """마이크 입력을 받고 음성을 텍스트로 변환하여 MQTT로 전송하는 독립 루프입니다."""
     r = sr.Recognizer()
     
+    # 🚨 STT 안정화 수정 1: 응답 시간 및 구문 시간 제한 확대
+    # Google API로부터 응답을 기다리는 최대 시간 (네트워크 지연 대비)
+    r.operation_timeout = 5 
+    # 인식기가 구문이 끝났다고 판단하기 전까지의 최대 시간 (긴 문장 대비)
+    # r.pause_threshold = 0.8 (기본값)
+    
     mqtt_broker = BROKER
     auth_data = {'username': MQTT_USERNAME, 'password': MQTT_PASSWORD}
     
@@ -519,7 +523,7 @@ def stt_listening_loop():
 
     # 마이크 스트림을 루프 바깥에서 한 번만 엽니다 (효율성 및 안정성 개선)
     try:
-        # sr.Microphone을 with 블록으로 감싸서 스트림을 한 번만 열고, 루프 내에서 재사용합니다.
+        # 마이크 스트림을 루프 바깥에서 한 번만 열어 효율성을 개선합니다.
         with sr.Microphone(device_index=DEVICE_INDEX, sample_rate=16000) as source:
             print("[STT-THREAD] Ambient noise calibrating...")
             r.adjust_for_ambient_noise(source, duration=1.5)
@@ -527,44 +531,52 @@ def stt_listening_loop():
             
             # 메인 리스닝 루프
             while True:
+                # 🚨 STT 안정화 수정 2: 구문 시간 제한을 15초로 늘려 긴 명령 인식 보장
                 print("\n[STT-THREAD] Listening for command (Say '최근 N분 요약해줘')...")
-                # r.listen()은 이미 source가 열려있는 상태에서 작동합니다.
-                audio = r.listen(source, timeout=None, phrase_time_limit=10) 
+                audio = r.listen(source, timeout=None, phrase_time_limit=15) 
                 
                 print("[STT-THREAD] Recognizing speech...")
-                text = r.recognize_google(audio, language="ko-KR") 
-                print("[STT-THREAD] You said:", text)
-
-                # TTS Stop Logic
-                stop_keywords = ["그만", "멈춰", "중단", "정지", "닥쳐"]
-                if any(keyword in text for keyword in stop_keywords):
-                     with TTS_LOCK:
-                        if TTS_PROCESS and TTS_PROCESS.poll() is None:
-                            TTS_PROCESS.terminate()
-                            TTS_PROCESS.wait()
-                            print("[STT-THREAD] 🛑 TTS playback terminated by voice command.")
-                            continue 
-
-                topic, payload = parse_speech_command(text)
                 
-                # MQTT 전송
                 try:
-                    publish.single(topic,
-                                   payload=payload,
-                                   hostname=mqtt_broker,
-                                   qos=1,
-                                   auth=auth_data)
-                    print(f"[STT-THREAD] MQTT Published: {topic} -> {payload}")
-                    # DB 직접 접근 (save_event_log) 제거 - 메인 스레드의 on_message에서 처리함
+                    text = r.recognize_google(audio, language="ko-KR") 
+                    print("[STT-THREAD] You said:", text)
+
+                    # TTS Stop Logic
+                    stop_keywords = ["그만", "멈춰", "중단", "정지", "닥쳐"]
+                    if any(keyword in text for keyword in stop_keywords):
+                         with TTS_LOCK:
+                            if TTS_PROCESS and TTS_PROCESS.poll() is None:
+                                TTS_PROCESS.terminate()
+                                TTS_PROCESS.wait()
+                                print("[STT-THREAD] 🛑 TTS playback terminated by voice command.")
+                                continue 
+
+                    topic, payload = parse_speech_command(text)
+                    
+                    # MQTT 전송
+                    try:
+                        publish.single(topic,
+                                       payload=payload,
+                                       hostname=mqtt_broker,
+                                       qos=1,
+                                       auth=auth_data)
+                        print(f"[STT-THREAD] MQTT Published: {topic} -> {payload}")
+                    except Exception as e:
+                        print(f"[STT-THREAD] MQTT publish error: {e}")
+                        
+                # 🚨 STT 안정화 수정 3: UnknownValueError와 RequestError 분리 처리
+                except sr.UnknownValueError:
+                    # 마이크에 소리가 있었으나, Google이 텍스트로 변환하지 못한 경우
+                    print("[STT-THREAD] ⚠️ Recognition Failed: Google Speech Recognition could not understand audio. (Please speak louder or clearer.)")
+                except sr.RequestError as e:
+                    # 네트워크 문제, API 키 문제 등 Google 서비스에 요청 실패한 경우
+                    print(f"[STT-THREAD] ❌ Request Error: Could not request results from Google Speech Recognition service; {e}")
                 except Exception as e:
-                    print(f"[STT-THREAD] MQTT publish error: {e}")
+                    # 기타 예상치 못한 오류
+                    print(f"[STT-THREAD] ❗ Unexpected Error during recognition: {e}")
 
                 time.sleep(0.1) # 루프 안정화
 
-    except sr.UnknownValueError:
-        print("[STT-THREAD] Google Speech Recognition could not understand audio.")
-    except sr.RequestError as e:
-        print(f"[STT-THREAD] Could not request results from Google Speech Recognition service; {e}")
     except Exception as e:
         # 초기화 실패 또는 루프 내부의 예상치 못한 치명적 오류 (e.g., 오디오 장치 유실)
         print(f"[CRITICAL] STT Loop or Initialization Error: {e}")
