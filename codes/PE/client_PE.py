@@ -24,6 +24,10 @@ MQTT_BROKER = "10.10.14.73"
 MQTT_PORT = 1883
 TOPIC_BASE = "project/vision"
 
+# 🚨🚨 AD_USER 인증 정보 추가 🚨🚨
+MQTT_USERNAME = "PE_USER"      # 등록된 AD 사용자 이름
+MQTT_PASSWORD = "sksk"  # 등록된 AD 사용자 비밀번호 (실제 값으로 변경 필요)
+
 # 수정: 모듈 이름 및 토픽 분리
 PE_MODULE = "PE"
 RAW_TOPIC = TOPIC_BASE + "/" + PE_MODULE + "/RAW"
@@ -496,7 +500,11 @@ def main():
     tracker = SimpleTracker(max_age=50)
     
     # 3. MQTT 클라이언트 초기화
-    mqtt_client = mqtt.Client()
+    mqtt_client = mqtt.Client(client_id="PE_Client", protocol=mqtt.MQTTv311)
+    
+    # 사용자 이름 및 비밀번호 설정
+    mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+
     mqtt_client.on_connect = on_connect
     try:
         mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)

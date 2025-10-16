@@ -24,6 +24,10 @@ DB_USER = "marine_user"
 DB_PASSWORD = "sksk"
 DB_NAME = "marine_system"
 
+# 🚨🚨 MQTT 인증 정보 추가 (SERVER_USER 사용) 🚨🚨
+MQTT_USERNAME = "SERVER_USER" # Mosquitto에 등록된 사용자 이름으로 변경
+MQTT_PASSWORD = "sksk" # Mosquitto에 등록된 비밀번호로 변경
+
 # === MQTT 설정 ===
 BROKER = "0.0.0.0" # 브로커 IP 설정 필요 (Docker 환경 시 10.10.14.73 등)
 PORT = 1883
@@ -778,6 +782,10 @@ def on_message(client, userdata, msg):
 # === MQTT 클라이언트 및 메인 루프 ===
 # MQTTv311 프로토콜 명시로 DeprecationWarning 해결
 client = mqtt.Client(client_id="MarineServer", protocol=mqtt.MQTTv311) 
+
+# MQTT 인증 정보 설정
+client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+
 client.on_connect = on_connect
 client.on_message = on_message
 

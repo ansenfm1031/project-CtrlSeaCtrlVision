@@ -28,6 +28,10 @@ BROKER = "10.10.14.73"
 PORT = 1883
 TOPIC_BASE = "project/vision" # 토픽 접두사
 
+# 🚨🚨 AD_USER 인증 정보 추가 🚨🚨
+MQTT_USERNAME = "AD_USER"      # 등록된 AD 사용자 이름
+MQTT_PASSWORD = "sksk"  # 등록된 AD 사용자 비밀번호 (실제 값으로 변경 필요)
+
 # AD 모듈 명확히 지정 및 토픽 분리
 AD_MODULE = "AD"
 RAW_TOPIC = TOPIC_BASE + "/" + AD_MODULE + "/RAW"
@@ -430,6 +434,10 @@ def main():
     # 2. MQTT 클라이언트 생성 및 연결
     # Fix: MQTTv311 프로토콜 명시로 DeprecationWarning 해결
     client = mqtt.Client(client_id="AD_Client", protocol=mqtt.MQTTv311) 
+
+    # 사용자 이름 및 비밀번호 설정
+    client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+
     def on_connect(client, userdata, flags, rc):
         if rc == 0:
             print(f"[{now_str()}] INFO MQTT :: Client connected successfully (RC: {rc})")

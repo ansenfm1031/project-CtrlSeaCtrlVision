@@ -14,6 +14,10 @@ from datetime import datetime, timezone
 BROKER = "10.10.14.73" 
 PORT = 1883
 
+# 🚨🚨 IMU_USER 인증 정보 추가 🚨🚨
+MQTT_USERNAME = "IMU_USER"      # 등록된 IMU 사용자 이름
+MQTT_PASSWORD = "sksk"  # 등록된 IMU 사용자 비밀번호
+
 # 수정: 모듈 이름 및 토픽 분리
 IMU_MODULE = "IMU"
 RAW_TOPIC = "project/imu/RAW"  # 원시 데이터 (정상/INFO 레벨)
@@ -132,7 +136,11 @@ def main():
     mpu6050_init()
 
     # 2. MQTT 클라이언트 생성 및 연결
-    client = mqtt.Client()
+    client = mqtt.Client(client_id="IMU_Client", protocol=mqtt.MQTTv311)
+
+    # 사용자 이름 및 비밀번호 설정
+    client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+
     try:
         client.connect(BROKER, PORT, 60)
         client.loop_start() 
