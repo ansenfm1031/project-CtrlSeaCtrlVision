@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>해상 시스템 모니터링 대시보드</title>
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <style>
+        /* 대시보드 전체 스타일 */
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #1c1c1c;
+            color: #f0f0f0;
+            margin: 0;
+            padding: 10px;
+            display: flex;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+        /* 메인 컨테이너 (50/50 분할) */
+        .main-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            gap: 10px;
+        }
+        /* 왼쪽 (DB 로그) 및 오른쪽 (데이터/영상) 영역 */
+        .left-panel {
+            flex: 1; /* 50% 폭 */
+            background-color: #2c2c2c;
+            border-radius: 8px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .right-panel {
+            flex: 1; /* 50% 폭 */
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        /* 오른쪽 영역의 각 섹션 (IMU, AD cam, PE cam) */
+        .section-container {
+            background-color: #2c2c2c;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        /* IMU 섹션 (높이 1/3) */
+        #imu-data-section {
+            flex: 1;
+        }
+        /* 카메라 섹션 (높이 2/3) */
+        #ad-camera-section, #pe-camera-section {
+            flex: 1;
+            padding: 0; /* 영상을 가득 채우기 위해 패딩 제거 */
+        }
+
+        /* 로그 화면 스타일 */
+        #db-log-display {
+            flex: 1;
+            background-color: #121212;
+            color: #00ff00; /* 터미널 스타일 녹색 */
+            font-family: 'Consolas', 'Courier New', monospace;
+            white-space: pre-wrap;
+            overflow-y: auto;
+            border-radius: 4px;
+            padding: 5px;
+            font-size: 0.9em;
+            line-height: 1.2;
+        }
+        .log-entry {
+            border-bottom: 1px dotted #3a3a3a;
+            padding: 2px 0;
+        }
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        /* IMU 데이터 출력 스타일 */
+        #imu-data-display {
+            font-size: 1.5em;
+            text-align: center;
+            padding: 10px;
+            background-color: #121212;
+            border-radius: 4px;
+        }
+        #imu-data-display span {
+            display: inline-block;
+            margin: 0 15px;
+            font-weight: bold;
+            color: #00bcd4; /* 청록색 강조 */
+        }
+        
+        /* 비디오 스트림 스타일 */
+        .video-wrapper {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .video-wrapper img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* 비율 유지하며 컨테이너에 맞춤 */
+        }
+        h2 {
+            margin-top: 0;
+            color: #bb86fc; /* 보라색 제목 */
+            font-size: 1.2em;
+            margin-bottom: 10px;
+        }
+
+    </style>
+</head>
+<body>
+
+<div class="main-container">
+
+    <div class="left-panel">
+        <h2>📊 DB 및 실시간 로그 화면</h2>
+        <div id="db-log-display">
+            {% for log in initial_db_logs %}
+            <div class="log-entry">{{ log }}</div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="right-panel">
+        
+        <div id="imu-data-section" class="section-container">
+            <h2>🧭 IMU 센서 데이터 (Roll, Pitch, Yaw)</h2>
+            <div id="imu-data-display">
+                <span id="imu-roll">Roll: 0.00°</span>
+                <span id="imu-pitch">Pitch: 0.00°</span>
+                <span id="imu-yaw">Yaw: 0.00°</span>
+            </div>
+        </div>
+        
+        <div id="ad-camera-section" class="section-container">
+            <h2>📹 AD 카메라 영상 (AI 장애물 감지)</h2>
+            <div class="video-wrapper">
+                <img src="/video_feed/AD" alt="AD Camera Feed">
+            </div>
+        </div>
+        
+        <div id="pe-camera-section" class="section-container">
+            <h2>🔥 PE 카메라 영상 (열화상/낙상 감지)</h2>
+            <div class="video-wrapper">
+                <img src="/video_feed/PE" alt="PE Camera Feed">
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script>
+    // SocketIO 클라이언트 연결
+    const socket = io();
+    
+    // IMU 데이터 업데이트 핸들러
+    socket.on('imu_update', function(data) {
+        document.getElementById('imu-roll').innerText = `Roll: ${data.roll}°`;
+        document.getElementById('imu-pitch').innerText = `Pitch: ${data.pitch}°`;
+        document.getElementById('imu-yaw').innerText = `Yaw: ${data.yaw}°`;
+    });
+
+    // 실시간 로그 메시지 업데이트 핸들러
+    socket.on('log_message', function(data) {
+        const logDisplay = document.getElementById('db-log-display');
+        
+        // 새 로그 항목 생성
+        const newLogEntry = document.createElement('div');
+        newLogEntry.classList.add('log-entry');
+        
+        // 로그 색상 구분 (선택적)
+        let color = '#00ff00'; // INFO: Green
+        if (data.log.includes('[CRITICAL]')) {
+            color = '#ff4444'; // CRITICAL: Red
+        } else if (data.log.includes('[WARNING]')) {
+            color = '#ffcc00'; // WARNING: Yellow
+        }
+        newLogEntry.style.color = color;
+
+        newLogEntry.innerText = data.log;
+        
+        // 로그 맨 아래에 추가
+        logDisplay.appendChild(newLogEntry);
+        
+        // 스크롤을 맨 아래로 이동
+        logDisplay.scrollTop = logDisplay.scrollHeight;
+    });
+
+    // 초기 로그 로드 후 스크롤을 맨 아래로 이동 (DB 로그)
+    document.addEventListener('DOMContentLoaded', function() {
+        const logDisplay = document.getElementById('db-log-display');
+        logDisplay.scrollTop = logDisplay.scrollHeight;
+    });
+
+</script>
+
+</body>
+</html>
