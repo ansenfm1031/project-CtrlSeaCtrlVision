@@ -666,7 +666,6 @@ def process_and_save_data(msg):
 
         # 4️⃣ TTS 재생
         text_to_speech(tts_text)
-        return
 
     # 2-2. 🟢 RAW 토픽 처리 (INFO 레벨 - 연속 데이터)
     elif action == "RAW":
