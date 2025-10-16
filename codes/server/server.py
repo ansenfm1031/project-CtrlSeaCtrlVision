@@ -12,11 +12,6 @@ import threading # STT 기능을 별도 스레드에서 실행하기 위함
 import speech_recognition as sr # STT 기능 추가
 import time # sleep 함수 사용
 import subprocess
-from functools import wraps
-
-# === Flask and SocketIO Imports (NEW) ===
-from flask import Flask, render_template, Response
-from flask_socketio import SocketIO, emit, join_room
 
 # === DB 연결 (MariaDB) ===
 DB_HOST = "localhost"
@@ -34,19 +29,6 @@ PORT = 1883
 TOPIC_BASE = "project/"   # 모듈 로그 접두사 (예: project/IMU/RAW)
 COMMAND_TOPIC = "command/summary" # 항해일지 요약 명령
 QUERY_TOPIC = "command/query" # 일반 질의 명령
-
-# === Flask and SocketIO Initialization (NEW) ===
-app = Flask(__name__)
-# 웹 소켓 CORS 허용 (개발 환경을 위해 *로 설정)
-app.config['SECRET_KEY'] = 'a_secure_secret_key_for_socketio'
-socketio = SocketIO(app, cors_allowed_origins="*")
-
-# === Flask Web Route (NEW) ===
-@app.route('/')
-def index():
-    """웹 대시보드 페이지를 서빙합니다."""
-    return render_template('index.html')
-
 
 # === 오디오 디버깅 설정 ===
 # STT 초기화 실패 시 어떤 장치가 사용 가능한지 확인하기 위한 변수
@@ -265,15 +247,6 @@ def save_event_log(module: str, action: str, full_payload: str):
         sql = "INSERT INTO events (module, action, payload, ts) VALUES (%s, %s, %s, %s)"
         CURSOR.execute(sql, (module, action, full_payload, now))
         DB_CONN.commit()
-        
-        # 🚨 SocketIO: 모든 이벤트 로그를 웹 대시보드에 전송 (NEW)
-        log_data = {
-            "ts": now,
-            "module": module,
-            "action": action,
-            "payload": full_payload,
-        }
-        socketio.emit('event_log', log_data)
         
         print(f"[{now}] [DB-OK] Log saved to events: ({module}) {action}")
     except Exception as e:
@@ -603,6 +576,18 @@ def stt_listening_loop():
             print(f"[STT-THREAD] An unexpected error occurred in STT loop: {e}")
             time.sleep(1) # 짧게 대기 후 재시도
 
+# === MQTT 콜백 함수 (메인 로직) ===
+def on_connect(client, userdata, flags, rc):
+    """브로커 연결 시 호출되며, 토픽을 구독합니다."""
+    if rc == 0:
+        print("[OK] Connected to broker")
+        # TOPIC_BASE와 COMMAND_TOPIC을 사용하여 구독
+        client.subscribe(TOPIC_BASE + "#") 
+        client.subscribe("command/#") # 모든 command/ 토픽 구독 (summary, query 포함)
+        print(f"[SUB] Subscribed to {TOPIC_BASE}# and command/#")
+    else:
+        print("[FAIL] Connection failed, code:", rc)
+
 # =======================================================================
 # === [데이터 라우터] 핵심 로직 (SocketIO Emit 추가) ===
 # =======================================================================
@@ -669,16 +654,6 @@ def process_and_save_data(msg):
 
         # 3️⃣ 긴급 알람 TTS 재생
         text_to_speech(f"긴급 알람 발생: {module} {action}")
-
-        # 4️⃣ SocketIO로 실시간 경고 전송 (NEW)
-        alert_data = {
-            "ts": now,
-            "topic": topic,
-            "payload": payload_dict
-        }
-        socketio.emit('alert_event', alert_data)
-        
-        print(f"[{now}] [DB/WEB] ALERT/CRITICAL processed: {module}/{action}")
         return
 
     # 2-2. 🟢 RAW 토픽 처리 (INFO 레벨 - 연속 데이터)
@@ -686,16 +661,10 @@ def process_and_save_data(msg):
         now = now_str()
         if module == "IMU":
             save_imu_raw_data(payload_dict)
-            # SocketIO로 IMU 데이터 실시간 전송 (NEW)
-            socketio.emit('imu_update', {"ts": now, "data": payload_dict})
-            print(f"[{now}] [DB/WEB] Saved and Emitted IMU RAW data.")
-
+    
         # VISION 시스템의 모든 세부 모듈(AD, PE 포함) 데이터를 vision_data에 통합 저장합니다.
         elif module in ["VISION", "AD", "PE"]:
             save_vision_data(module, action, payload_dict)
-            # SocketIO로 Vision/AD/PE RAW 데이터 전송 (NEW)
-            socketio.emit('vision_raw_update', {"ts": now, "module": module, "data": payload_dict})
-            print(f"[{now}] [DB/WEB] Saved and Emitted {module} RAW data.")
 
         else:
             print(f"[{now_str()}] [WARN] Unknown RAW module: {module}. Data discarded.")
@@ -703,7 +672,6 @@ def process_and_save_data(msg):
 
     # 2-3. 기타 일반 시스템/STT 이벤트 (events 테이블)
     else:
-        # save_event_log 함수 내부에서 SocketIO로 전송됨
         save_event_log(module, action, payload)
         print(f"[{now_str()}] [LOG] Saved general log to events table. Module: {module}")
 
@@ -757,9 +725,6 @@ def on_message(client, userdata, msg):
             # LLM 결과 TTS 발화 후 DB에 기록
             save_event_log("LLM", "SAY", summary)
 
-            # 🚨 SocketIO로 요약 결과 전송 (NEW)
-            socketio.emit('llm_summary', {"text": summary, "time": now, "minutes": minutes})
-
         elif topic == "command/query":
              # 일반 쿼리는 LLM에 바로 질의 후 답변을 TTS로 발화합니다.
              print(f"[{now}] [CMD] Query request received → {payload}")
@@ -769,10 +734,6 @@ def on_message(client, userdata, msg):
              response = query_llm(payload)
              text_to_speech(response)
              save_event_log("LLM", "RESPONSE", response)
-
-             # 🚨 SocketIO로 질의응답 결과 전송 (NEW)
-             socketio.emit('llm_response', {"query": payload, "response": response, "time": now})
-
         return
 
     # 2. === 데이터 처리 로직을 새로운 함수로 위임 ===
@@ -816,23 +777,3 @@ if __name__ == '__main__':
     
     # 3. MQTT 클라이언트 루프 시작 (Flask/SocketIO와 동시 실행)
     client.loop_start() 
-    
-    # 4. Flask/SocketIO 서버 실행 (메인 스레드 점유)
-    print("[INFO] Starting Flask SocketIO server on http://0.0.0.0:5000")
-    try:
-        # debug=False로 설정하여 두 번 실행되는 것을 방지합니다 (Thread 때문에 중요)
-        socketio.run(app, host='0.0.0.0', port=5000, debug=False) 
-    except KeyboardInterrupt:
-        # Ctrl+C가 눌렸을 때 깔끔하게 종료
-        print("\n[EXIT] Server is stopping gracefully...")
-    except Exception as e:
-        print(f"\n[CRITICAL] Flask/SocketIO 서버 실행 중 오류: {e}")
-
-    finally:
-        print("[EXIT] Server cleanup...")
-        client.disconnect()
-        if CURSOR:
-            CURSOR.close() 
-        if DB_CONN:
-            DB_CONN.close()
-        print("[EXIT] Server stopped successfully.")
