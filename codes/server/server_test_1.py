@@ -758,7 +758,38 @@ def process_and_save_data(msg):
             print(f"[{now}] [DB] ALERT/CRITICAL log saved to events: {module}/{action}")
 
         # 3️⃣ 긴급 알람 TTS 재생
-        text_to_speech(f"긴급 알람 발생: {module} {action}")
+        print(f"[{now}] [TTS] 긴급 알람 발화: {module} {action}")
+    
+        # 현재 시각을 형식에 맞게 준비 (HH:MM:SS)
+        current_time_short = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        tts_text = f"긴급 알람 발생: {module} {action}" # 기본 폴백 텍스트
+
+        if module == "IMU" and action == "ALERT":
+            # IMU 센서 위험 각도 초과 알람 처리
+            detected_angle = payload_dict.get('roll_angle', payload_dict.get('roll', 0.0))
+            if detected_angle is not None:
+                # '긴급 상황 발생! HH:MM:SS 선체 각도 15.5도. 위험 각도 초과. HH:MM:SS 선체 각도 15.5도. 위험 각도 초과'
+                tts_text = f"긴급 상황 발생! {current_time_short} 선체 각도 {detected_angle}도. 위험 각도 초과. {current_time_short} 선체 각도 {detected_angle}도. 위험 각도 초과"
+
+        elif module == "AD" and action == "ALERT":
+            # 어노말리 디텍션 객체 위험 접근 감지 알람 처리
+            # 'detections' 리스트의 첫 번째 객체 'object_type' 또는 'object'를 사용
+            detections = payload_dict.get('detections', payload_dict.get('details', []))
+            object_type = '미확인 객체'
+            if detections and isinstance(detections, list):
+                # 첫 번째 객체 정보 사용
+                object_type = detections[0].get('object_type', detections[0].get('object', '미확인 객체'))
+
+            # '긴급 상황 발생! HH:MM:SS 대형 컨테이너선 접근 중. HH:MM:SS 대형 컨테이너선 접근 중'
+            tts_text = f"긴급 상황 발생! {current_time_short} {object_type} 접근 중. {current_time_short} {object_type} 접근 중"
+
+        elif module == "PE" and action == "CRITICAL" and payload_dict.get('action') in ["fall", "down"]:
+            # 갑판 낙상 사고 감지 알람 처리 (PE 모듈, action이 fall 또는 down인 경우)
+            # '긴급 상황 발생! HH:MM:SS 갑판에서 낙상 사고 발생. HH:MM:SS 갑판에서 낙상 사고 발생'
+            tts_text = f"긴급 상황 발생! {current_time_short} 갑판에서 낙상 사고 발생. {current_time_short} 갑판에서 낙상 사고 발생"
+
+        # 4️⃣ TTS 재생
+        text_to_speech(tts_text)
 
         # 4️⃣ SocketIO로 실시간 경고 전송 (NEW)
         alert_data = {
