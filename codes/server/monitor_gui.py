@@ -320,7 +320,7 @@ class MarineDashboard(QWidget):
         self.client.disconnect()
         self.db_fetcher.timer.stop()
         event.accept()
-
+    
 # =========================================================
 # 7. 메인 실행 (수정된 부분)
 # =========================================================
