@@ -29,6 +29,8 @@ PORT = 1883
 TOPIC_BASE = "project/"   # 모듈 로그 접두사 (예: project/IMU/RAW)
 COMMAND_TOPIC = "command/summary" # 항해일지 요약 명령
 QUERY_TOPIC = "command/query" # 일반 질의 명령
+# GUI 실시간 로그 전송용 토픽
+GUI_TOPIC_LOG = "project/log/RAW"
 
 # === 오디오 디버깅 설정 ===
 # STT 초기화 실패 시 어떤 장치가 사용 가능한지 확인하기 위한 변수
@@ -254,6 +256,16 @@ def save_event_log(module: str, action: str, full_payload: str):
         CURSOR.execute(sql, (module, action, full_payload, now))
         DB_CONN.commit()
         print(f"[{now}] [DB-OK] Log saved to events: ({module}) {action}")
+
+        # GUI 실시간 전송 추가
+        gui_payload = {
+            "ts": now,
+            "module": module,
+            "action": action,
+            "payload": full_payload
+        }
+        client.publish(GUI_TOPIC_LOG, json.dumps(gui_payload, ensure_ascii=False))
+
     except Exception as e:
         print(f"[{now}] [DB-ERROR] events 테이블 저장 실패: {e}")
 # 'module' 인수를 사용하여 AD/PE/VISION을 명확히 구분
@@ -282,6 +294,7 @@ def save_vision_data(module: str, action: str, payload_dict: dict):
         """
 
         records_inserted = 0
+        gui_summary = []
         for detection in detections:
             # 안전하게 키들을 추출 (여러 포맷 대비)
             object_type = detection.get('object_type') or detection.get('object') or detection.get('type') or 'UNKNOWN'
@@ -301,8 +314,23 @@ def save_vision_data(module: str, action: str, payload_dict: dict):
             ))
             records_inserted += 1
 
+            gui_summary.append({
+                "object": object_type,
+                "risk": risk_level,
+                "desc": description
+            })
+
         DB_CONN.commit()
         print(f"[{now}] [DB-OK] Saved {records_inserted} records to vision_data from {module} ({action}).")
+
+        # GUI 실시간 전송
+        gui_payload = {
+            "ts": now,
+            "module": module,
+            "action": action,
+            "detections": gui_summary
+        }
+        client.publish(GUI_TOPIC_LOG, json.dumps(gui_payload, ensure_ascii=False))
 
     except Exception as e:
         try:
@@ -331,6 +359,18 @@ def save_imu_raw_data(payload_dict: dict):
         CURSOR.execute(sql, (now, pitch, roll, yaw)) 
         DB_CONN.commit()
         print(f"[{now}] [DB-OK] Raw data saved to imu_data: R:{roll:.2f} P:{pitch:.2f} Y:{yaw:.2f}")
+
+        # GUI 실시간 전송
+        gui_payload = {
+            "ts": now,
+            "module": "IMU",
+            "action": "RAW",
+            "roll": roll,
+            "pitch": pitch,
+            "yaw": yaw
+        }
+        client.publish(GUI_TOPIC_LOG, json.dumps(gui_payload, ensure_ascii=False))
+
     except Exception as e:
         print(f"[DB-ERROR] imu_data 테이블 저장 실패: {e}")
 

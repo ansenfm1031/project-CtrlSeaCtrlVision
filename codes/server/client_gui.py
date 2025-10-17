@@ -41,6 +41,17 @@ TOPIC_CAM_AD = f"{TOPIC_BASE}/vision/AD/RAW"
 # 3. Log/Event Topic 
 TOPIC_LOGS = f"{TOPIC_BASE}/log/RAW" 
 
+# === 색상 테마 정의 ===
+COLOR_MAP = {
+    "IMU": "#58a6ff",      # 파란색
+    "AD": "#e76f51",       # 주황색
+    "PE": "#9d4edd",       # 보라색
+    "SERVER": "#2a9d8f",   # 초록색
+    "STT": "#2a9d8f",
+    "LLM": "#2a9d8f",
+    "DEFAULT": "#a8a8a8"
+}
+
 # --- MQTT Client (Running in a separate thread for PyQt) ---
 class MqttClient(QObject):
     # PyQt의 이벤트 루프에서 안전하게 실행되도록 시그널 사용
@@ -236,16 +247,62 @@ class MarineDashboardApp(QWidget):
 
 
     def update_log_ui(self, log):
-        ts = log.get('ts', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        module = log.get('module', 'UNKNOWN')
-        action = log.get('action', 'EVENT')
-        message = log.get('payload', 'No detailed message.')
+        """
+        서버에서 수신한 로그(JSON dict)를 색상, 포맷에 맞게 표시
+        """
+        try:
+            ts = log.get('ts', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            module = log.get('module', 'UNKNOWN').upper()
+            action = log.get('action', 'EVENT')
+            color = COLOR_MAP.get(module, COLOR_MAP["DEFAULT"])
 
-        text = f"[{ts}] <{module}::{action}> {message}\n"
-        self.db_log_widget.insertPlainText(text)
-        self.db_log_widget.verticalScrollBar().setValue(
-            self.db_log_widget.verticalScrollBar().maximum()
-        )
+            # 기본 메시지
+            message = log.get('payload', '')
+
+            # --- IMU 로그 ---
+            if module == "IMU" and all(k in log for k in ["roll", "pitch", "yaw"]):
+                msg = f"Roll={float(log['roll']):.2f}°  Pitch={float(log['pitch']):.2f}°  Yaw={float(log['yaw']):.2f}°"
+
+            # --- Vision 로그 (AD/PE) ---
+            elif module in ["AD", "PE"] and isinstance(log.get("detections"), list):
+                det_lines = []
+                for det in log["detections"]:
+                    obj = det.get("object", "Unknown")
+                    risk = int(det.get("risk", 0))
+                    desc = det.get("desc", "")
+                    # 위험도 강조 색상 처리
+                    if risk >= 3:
+                        det_lines.append(f"<b><span style='color:#ff4d4d'>{obj} 위험도 {risk}</span></b> - {desc}")
+                    else:
+                        det_lines.append(f"{obj} 위험도 {risk} - {desc}")
+                msg = " / ".join(det_lines)
+
+            # --- STT/LLM 로그 ---
+            elif module in ["STT", "LLM", "SERVER"]:
+                msg = message
+
+            # --- 일반 로그 ---
+            else:
+                msg = f"{action} → {message}"
+
+            # 최종 문자열 구성
+            formatted = f"<span style='color:{color}'>[{ts}] ({module}) {msg}</span><br>"
+
+            # QTextEdit에 추가
+            self.db_log_widget.insertHtml(formatted)
+            self.db_log_widget.moveCursor(self.db_log_widget.textCursor().MoveOperation.End)
+
+            # 자동 스크롤 유지
+            self.db_log_widget.verticalScrollBar().setValue(
+                self.db_log_widget.verticalScrollBar().maximum()
+            )
+
+        except Exception as e:
+            print(f"[GUI-ERROR] update_log_ui 처리 중 오류: {e}")
+            # 예외 발생 시 기본 문자열로 출력
+            fallback = f"[{datetime.now().strftime('%H:%M:%S')}] {log}\n"
+            self.db_log_widget.insertPlainText(fallback)
+
 
     def update_camera_feed(self, label, base64_data):
         try:
