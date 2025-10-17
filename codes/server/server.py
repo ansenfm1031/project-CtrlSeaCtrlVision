@@ -376,7 +376,7 @@ def fetch_logs(minutes=15):
         sql_events = """
             SELECT ts, module, action, payload
             FROM events
-            WHERE ts >= NOW() - INTERVAL %s MINUTE
+            WHERE ts >= UTC_TIMESTAMP() - INTERVAL %s MINUTE
             ORDER BY ts ASC
         """
         CURSOR.execute(sql_events, (minutes,)) 
@@ -389,7 +389,7 @@ def fetch_logs(minutes=15):
         sql_roll = """
             SELECT MAX(roll), MIN(roll)
             FROM imu_data
-            WHERE ts >= NOW() - INTERVAL %s MINUTE
+            WHERE ts >= UTC_TIMESTAMP() - INTERVAL %s MINUTE
         """
         CURSOR.execute(sql_roll, (minutes,))
         max_roll, min_roll = CURSOR.fetchone()
@@ -400,7 +400,7 @@ def fetch_logs(minutes=15):
         sql_yaw = """
             SELECT yaw
             FROM imu_data
-            WHERE ts >= NOW() - INTERVAL %s MINUTE
+            WHERE ts >= UTC_TIMESTAMP() - INTERVAL %s MINUTE
             ORDER BY ts DESC 
             LIMIT 1
         """
