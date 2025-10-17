@@ -229,9 +229,15 @@ class MarineDashboardApp(QWidget):
             if qimg.isNull():
                 return
             pixmap = QPixmap.fromImage(qimg)
-            pixmap = pixmap.scaled(640, 480, Qt.AspectRatioMode.KeepAspectRatio,
-                                   Qt.TransformationMode.SmoothTransformation)
+            pixmap = pixmap.scaled(
+                640, 480,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation   # ✅ 속도 우선
+            )
             graphics_item.setPixmap(pixmap)
+
+            # 🚀 바로 다시 그리기 (렌더 큐 지연 방지)
+            graphics_item.scene().update()
         except Exception as e:
             print(f"[Camera Feed Error] {e}")
 

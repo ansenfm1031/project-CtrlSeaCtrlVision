@@ -354,7 +354,7 @@ def run_inference_and_publish(client):
     # --------------------------
     try:
         # 프레임 압축 (JPEG) 및 Base64 인코딩
-        ret_enc, buffer = cv2.imencode('.jpg', visual_frame, [cv2.IMWRITE_JPEG_QUALITY, 40])
+        ret_enc, buffer = cv2.imencode('.jpg', visual_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
         
         if ret_enc:
             # JPEG 바이트를 Base64 문자열로 변환
