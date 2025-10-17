@@ -113,13 +113,22 @@ class MarineDashboardApp(QWidget):
         super().__init__()
         self.setWindowTitle("Marine Server 실시간 통합 대시보드")
         self.setMinimumSize(1200, 800)
-        
+
         self.imu_data = {'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0}
-        self.imu_labels = {} 
+        self.imu_labels = {}
+
+        # 🔹 최신 카메라 프레임 저장용 버퍼
+        self.latest_ad_frame = None
+        self.latest_pe_frame = None
 
         self.init_ui()
         self.mqtt_client = self.setup_mqtt()
 
+        # 🔹 GUI가 멈추지 않게 주기적으로 프레임 갱신
+        from PyQt6.QtCore import QTimer
+        self.frame_timer = QTimer(self)
+        self.frame_timer.timeout.connect(self.refresh_camera_frames)
+        self.frame_timer.start(50)   # 50ms ≈ 약 20FPS 정도로 주기적 갱신
     # --- UI Initialization ---
     def init_ui(self):
         font_family = "Nanum Gothic"
@@ -322,6 +331,35 @@ class MarineDashboardApp(QWidget):
             # 예외 발생 시 기본 문자열로 출력
             fallback = f"[{datetime.now().strftime('%H:%M:%S')}] {log}\n"
             self.db_log_widget.insertPlainText(fallback)
+    
+    def update_camera_feed(self, label, base64_data):
+        try:
+            image_data = base64.b64decode(base64_data)
+            image = QImage.fromData(image_data)
+            if image.isNull():
+                return
+
+            pixmap = QPixmap.fromImage(image)
+            pixmap = pixmap.scaled(
+                label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+
+            if label == self.cam_ad_label:
+                self.latest_ad_frame = pixmap
+            elif label == self.cam_pe_label:
+                self.latest_pe_frame = pixmap
+
+        except Exception as e:
+            print(f"[Camera Feed Error] {e}")
+
+    def refresh_camera_frames(self):
+        """가장 최근 수신된 카메라 프레임을 QLabel에 표시"""
+        if self.latest_ad_frame is not None:
+            self.cam_ad_label.setPixmap(self.latest_ad_frame)
+        if self.latest_pe_frame is not None:
+            self.cam_pe_label.setPixmap(self.latest_pe_frame)
 
 
     def update_camera_feed(self, label, base64_data):
