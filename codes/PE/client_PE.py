@@ -24,9 +24,9 @@ MQTT_BROKER = "10.10.14.73"
 MQTT_PORT = 1883
 TOPIC_BASE = "project/vision"
 
-# 🚨🚨 AD_USER 인증 정보 추가 🚨🚨
-MQTT_USERNAME = "PE_USER"      # 등록된 AD 사용자 이름
-MQTT_PASSWORD = "sksk"  # 등록된 AD 사용자 비밀번호 (실제 값으로 변경 필요)
+# 🚨🚨 PE_USER 인증 정보 추가 🚨🚨
+MQTT_USERNAME = "PE_USER"      # 등록된 PE 사용자 이름
+MQTT_PASSWORD = "sksk"  # 등록된 PE 사용자 비밀번호
 
 # 수정: 모듈 이름 및 토픽 분리
 PE_MODULE = "PE"

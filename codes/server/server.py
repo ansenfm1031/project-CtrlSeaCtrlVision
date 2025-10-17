@@ -509,6 +509,13 @@ def summarize_logs(logs, imu_stats, minutes):
 def text_to_speech(text, filename="summary.mp3"):
     """TTS 재생. 기존 재생 중이면 중단 후 새로 재생"""
     global TTS_PROCESS
+
+    # 🚨 재생 시작 상태를 GUI에 알림 🚨
+    try:
+        publish.single(STATUS_TOPIC, payload="TTS_START", hostname=BROKER, auth={'username': MQTT_USERNAME, 'password': MQTT_PASSWORD})
+    except Exception as e:
+        print(f"[WARN] Failed to publish TTS_START status: {e}")
+
     with TTS_LOCK:
         if TTS_PROCESS and TTS_PROCESS.poll() is None:
             # 기존 TTS 중단

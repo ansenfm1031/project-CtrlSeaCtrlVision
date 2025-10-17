@@ -32,7 +32,7 @@ MQTT_USERNAME = "PYQT_USER"
 MQTT_PASSWORD = "sksk" 
 
 # 1. IMU Data Topic (client_IMU)
-TOPIC_IMU = f"{TOPIC_BASE}/IMU/RAW" 
+TOPIC_IMU = f"{TOPIC_BASE}/imu/RAW" 
 
 # 2. Camera Topics (client_PE, client_AD)
 TOPIC_CAM_PE = f"{TOPIC_BASE}/vision/PE/RAW"
@@ -343,4 +343,5 @@ if __name__ == '__main__':
     ex = MarineDashboardApp()
     ex.show()
     sys.exit(app.exec())
+
 
