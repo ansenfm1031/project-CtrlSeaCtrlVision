@@ -18,14 +18,16 @@ import paho.mqtt.client as mqtt
 MQTT_BROKER = "10.10.14.73"
 MQTT_PORT = 1883
 
-TOPIC_BASE = "project"
+TOPIC_BASE = "project/vision"
 MQTT_USERNAME = "PYQT_USER"
 MQTT_PASSWORD = "sksk"
 
-TOPIC_IMU = f"{TOPIC_BASE}/imu/RAW"
-TOPIC_CAM_PE = f"{TOPIC_BASE}/vision/PE/RAW"
-TOPIC_CAM_AD = f"{TOPIC_BASE}/vision/AD/RAW"
-TOPIC_VIDEO_AD = f"{TOPIC_BASE}/vision/AD/VIDEO"
+TOPIC_IMU = "project/imu/RAW"
+TOPIC_CAM_PE = f"{TOPIC_BASE}/FALL/VIDEO"   # PE.py의 비디오 스트림
+TOPIC_PE_RAW = f"{TOPIC_BASE}/PE/RAW"       # 낙상 감지 RAW 로그
+TOPIC_PE_ALERT = f"{TOPIC_BASE}/PE/ALERT"   # 낙상 감지 ALERT 로그
+TOPIC_CAM_AD = f"{TOPIC_BASE}/AD/RAW"
+TOPIC_VIDEO_AD = f"{TOPIC_BASE}/AD/VIDEO"
 TOPIC_LOGS = f"{TOPIC_BASE}/log/RAW"
 
 def safe_b64decode(data: str):
@@ -65,8 +67,12 @@ class MqttClient(QObject):
             print("MQTT Broker Connected Successfully.")
             client.subscribe(TOPIC_IMU)
             client.subscribe(TOPIC_CAM_AD)
-            client.subscribe(TOPIC_CAM_PE)
+            client.subscribe(TOPIC_VIDEO_AD)
+            client.subscribe(TOPIC_CAM_PE)     # FALL/VIDEO
+            client.subscribe(TOPIC_PE_RAW)     # 낙상 RAW
+            client.subscribe(TOPIC_PE_ALERT)   # 낙상 ALERT
             client.subscribe(TOPIC_LOGS)
+            print(f"Subscribed → {TOPIC_IMU}, {TOPIC_VIDEO_AD}, {TOPIC_CAM_PE}, {TOPIC_PE_RAW}, {TOPIC_PE_ALERT}, {TOPIC_LOGS}")
         else:
             print(f"MQTT Connection Failed with code {rc}.")
 
@@ -191,18 +197,23 @@ class MarineDashboardApp(QWidget):
                 self.update_imu_ui(data)
             except json.JSONDecodeError:
                 print(f"[IMU] JSON Error")
+
         elif topic in [TOPIC_VIDEO_AD, TOPIC_CAM_AD]:
             self.update_camera_view(self.ad_pixmap_item, payload)
-        elif topic == TOPIC_CAM_PE:
+
+        elif topic == TOPIC_CAM_PE:  # ✅ 낙상 영상
             self.update_camera_view(self.pe_pixmap_item, payload)
-        elif topic == TOPIC_LOGS:
+
+        elif topic in [TOPIC_LOGS, TOPIC_PE_RAW, TOPIC_PE_ALERT]:  # ✅ 낙상 로그/알람
             try:
                 log = json.loads(payload)
                 self.update_log_ui(log)
             except json.JSONDecodeError:
                 self.update_log_ui({
                     "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "module": "SYS", "action": "RAW", "payload": payload
+                    "module": "SYS",
+                    "action": "RAW",
+                    "payload": payload
                 })
 
     # --- IMU UI 업데이트 ---
