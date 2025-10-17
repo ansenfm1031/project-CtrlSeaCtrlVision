@@ -203,6 +203,11 @@ def initialize_vision():
              # cv2.VideoCapture가 인덱스에 실패하면 오류 발생
             raise RuntimeError(f"웹캠 인덱스 {AD_CAMERA_INDEX}를 열 수 없습니다.")
         
+        for _ in range(5):
+            cap.read()
+            time.sleep(0.05)
+        print(f"[{now_str()}] 🎥 카메라 버퍼 안정화 완료 (첫 5프레임 스킵).")
+        
     except Exception as e:
         print(f"[{now_str()}] ❌ CRITICAL: 초기화 실패 - {e}")
         sys.exit(1)
@@ -353,7 +358,7 @@ def run_inference_and_publish(client):
         
         if ret_enc:
             # JPEG 바이트를 Base64 문자열로 변환
-            jpg_as_text = base64.b64encode(buffer.tobytes())
+            jpg_as_text = base64.b64encode(buffer.tobytes()).decode('utf-8')
             
             # 새로운 VIDEO 토픽으로 발행 (QoS 0)
             client.publish(AD_VIDEO_TOPIC, jpg_as_text, qos=0)
@@ -361,7 +366,10 @@ def run_inference_and_publish(client):
             # 발행 로그
             end_time = time.time()
             fps = 1.0 / (end_time - start_time + 1e-6)
-            print(f"[{now_str()}] [PUB-AD-VIDEO] ✅ Visual frame sent (FPS: {fps:.1f}) (Size: {len(jpg_as_text)/1024:.1f} KB)")
+            # (수정) FPS 로그는 5초마다 한 번만 출력 (과도한 로그 방지)
+            # print(f"[{now_str()}] [PUB-AD-VIDEO] ✅ Visual frame sent (FPS: {fps:.1f}) (Size: {len(jpg_as_text)/1024:.1f} KB)")
+            if int(time.time()) % 5 == 0:
+                print(f"[{now_str()}] [PUB-AD-VIDEO] ✅ Sent (FPS: {fps:.1f}) (Size: {len(jpg_as_text)/1024:.1f} KB)")
         else:
             print(f"[{now_str()}] [WARNING] ❌ JPEG encoding failed.")
             
@@ -404,7 +412,7 @@ def run_inference_and_publish(client):
             alert_summary = f"⚠️ 항해 주의! 암초(Reef) 감지됨."
         else:
             # CRITICAL도 WARNING도 아니면 발행하지 않음 (예: 단순 Lighthouse)
-            time.sleep(0.01) # CPU 점유율 관리
+            time.sleep(0.03) # CPU 점유율 관리
             return 
 
         alert_data = {

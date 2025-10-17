@@ -374,6 +374,20 @@ def save_imu_raw_data(payload_dict: dict):
     except Exception as e:
         print(f"[DB-ERROR] imu_data 테이블 저장 실패: {e}")
 
+def save_frame_data(module, base64_str):
+    """카메라 프레임(Base64 인코딩된 이미지) 저장"""
+    try:
+        ensure_db_connection()
+        now = now_str()
+        
+        sql = "INSERT INTO frames (ts, module, frame_base64) VALUES (%s, %s, %s)"
+        CURSOR.execute(sql, (now, module, base64_str))
+        DB_CONN.commit()
+        print(f"[{now}] [DB-OK] Frame saved to frames: ({module})")
+
+    except Exception as e:
+        print(f"[DB-ERROR] ❌ Failed to save frame ({module}): {e}")
+
 # === LLM/TTS 로직 함수 (DB_CONN, CURSOR 사용) ===
 
 def query_llm(prompt: str) -> str:
@@ -644,7 +658,7 @@ def process_and_save_data(msg):
 
     # 1. 토픽 파싱
     topic = msg.topic
-    payload = msg.payload.decode('utf-8')
+    payload = msg.payload.decode('utf-8', errors='ignore')
     payload_dict = parse_payload_to_dict(payload)
 
     parts = topic.split('/')
@@ -671,6 +685,14 @@ def process_and_save_data(msg):
         if not topic.startswith("command/"):
             print(f"[{now_str()}] [WARN] Skipping short or unknown topic: {topic}")
         return
+    
+    # =======================================================
+    # 🎥 VIDEO 토픽은 frames 테이블로만 저장 (events에는 저장 안 함)
+    # =======================================================
+    if action == "VIDEO":
+        save_frame_data(module, payload)
+        print(f"[{now_str()}] [FRAME] 🖼 Saved {module} frame ({len(payload):,} bytes)")
+        return  # ✅ VIDEO는 여기서 종료 (events로 안 감)
 
     # =======================================================
     # 2. 데이터 라우팅 및 저장 (ALERT 우선 처리)
