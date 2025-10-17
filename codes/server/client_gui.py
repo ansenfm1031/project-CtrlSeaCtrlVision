@@ -41,6 +41,18 @@ TOPIC_CAM_AD = f"{TOPIC_BASE}/vision/AD/RAW"
 # 3. Log/Event Topic 
 TOPIC_LOGS = f"{TOPIC_BASE}/log/RAW" 
 
+def safe_b64decode(data: str):
+    """깨진 Base64 문자열을 자동 복구하여 디코딩."""
+    data = data.strip().replace('\n', '').replace('\r', '')
+    missing_padding = len(data) % 4
+    if missing_padding:
+        data += '=' * (4 - missing_padding)
+    try:
+        return base64.b64decode(data)
+    except Exception as e:
+        print(f"[Decode Error] {e}")
+        return b''
+    
 # === 색상 테마 정의 ===
 COLOR_MAP = {
     "IMU": "#58a6ff",      # 파란색
@@ -306,7 +318,7 @@ class MarineDashboardApp(QWidget):
 
     def update_camera_feed(self, label, base64_data):
         try:
-            image_data = base64.b64decode(base64_data)
+            image_data = safe_b64decode(base64_data)
             image = QImage.fromData(image_data)
             
             if image.isNull():

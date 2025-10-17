@@ -354,14 +354,14 @@ def run_inference_and_publish(client):
     # --------------------------
     try:
         # 프레임 압축 (JPEG) 및 Base64 인코딩
-        ret_enc, buffer = cv2.imencode('.jpg', visual_frame, [cv2.IMWRITE_JPEG_QUALITY, 50]) 
+        ret_enc, buffer = cv2.imencode('.jpg', visual_frame, [cv2.IMWRITE_JPEG_QUALITY, 40])
         
         if ret_enc:
             # JPEG 바이트를 Base64 문자열로 변환
-            jpg_as_text = base64.b64encode(buffer.tobytes()).decode('utf-8')
+            jpg_as_text = base64.b64encode(buffer.tobytes()).decode('utf-8').replace('\n', '').replace('\r', '')
             
-            # 새로운 VIDEO 토픽으로 발행 (QoS 0)
-            client.publish(AD_VIDEO_TOPIC, jpg_as_text, qos=0)
+            # 새로운 VIDEO 토픽으로 발행 (QoS 1)
+            client.publish(AD_VIDEO_TOPIC, jpg_as_text, qos=1)
             
             # 발행 로그
             end_time = time.time()
