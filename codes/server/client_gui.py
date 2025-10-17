@@ -128,7 +128,8 @@ class MarineDashboardApp(QWidget):
         from PyQt6.QtCore import QTimer
         self.frame_timer = QTimer(self)
         self.frame_timer.timeout.connect(self.refresh_camera_frames)
-        self.frame_timer.start(50)   # 50ms ≈ 약 20FPS 정도로 주기적 갱신
+        self.frame_timer.start(80)   # 80ms ≈ 약 12fps 정도 → 깜빡임 줄고 CPU도 여유 있음
+
     # --- UI Initialization ---
     def init_ui(self):
         font_family = "Nanum Gothic"
@@ -356,11 +357,30 @@ class MarineDashboardApp(QWidget):
             print(f"[Camera Feed Error] {e}")
 
     def refresh_camera_frames(self):
-        """가장 최근 수신된 카메라 프레임을 QLabel에 표시"""
-        if self.latest_ad_frame is not None:
-            self.cam_ad_label.setPixmap(self.latest_ad_frame)
-        if self.latest_pe_frame is not None:
-            self.cam_pe_label.setPixmap(self.latest_pe_frame)
+        """최근 프레임을 QLabel에 부드럽게 갱신"""
+        from PyQt6.QtGui import QPainter
+
+        def draw_pixmap(label, pixmap):
+            if pixmap is None:
+                return
+            try:
+                # QLabel에 깜빡임 없이 그리기
+                target = QPixmap(label.size())
+                target.fill(Qt.GlobalColor.black)  # 배경을 검정으로 유지
+                painter = QPainter(target)
+                # 중앙 정렬로 이미지 그리기
+                x = (label.width() - pixmap.width()) // 2
+                y = (label.height() - pixmap.height()) // 2
+                painter.drawPixmap(x, y, pixmap)
+                painter.end()
+                label.setPixmap(target)
+            except Exception as e:
+                print(f"[Painter Error] {e}")
+
+        # AD 카메라
+        draw_pixmap(self.cam_ad_label, self.latest_ad_frame)
+        # PE 카메라
+        draw_pixmap(self.cam_pe_label, self.latest_pe_frame)
 
 
     def update_camera_feed(self, label, base64_data):
