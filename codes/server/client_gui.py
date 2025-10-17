@@ -78,6 +78,9 @@ class MqttClient(QObject):
         self.client.username_pw_set(username=MQTT_USERNAME, password=MQTT_PASSWORD)
 
     def on_connect(self, client, userdata, flags, rc):
+
+        client.subscribe("project/vision/AD/VIDEO")
+
         if rc == 0:
             print("MQTT Broker Connected Successfully.")
             client.subscribe(TOPIC_IMU)
@@ -215,33 +218,38 @@ class MarineDashboardApp(QWidget):
         return client
 
     def on_mqtt_message(self, topic, payload):
-        # 1. IMU Data Processing (project/IMU/RAW)
+        # 1️⃣ IMU Data Processing
         if topic == TOPIC_IMU:
             try:
                 data = json.loads(payload)
-                print(f"IMU Data Received & Parsed: {data}") # 👈 성공적으로 파싱 시 로그
+                print(f"IMU Data Received & Parsed: {data}")
                 self.update_imu_ui(data)
             except json.JSONDecodeError as e:
-                # 👈 JSON 파싱 오류 시 정확한 오류 메시지 출력
                 print(f"IMU: JSON Decode Error: {e} | Payload: {payload}")
                 self.db_log_widget.insertPlainText(f"[ERROR] IMU JSON Error: {e}\n")
-        
-        # 2. Log Data Processing (project/log/RAW)
+
+        # 2️⃣ AD VIDEO (Base64 → 이미지 표시)
+        elif topic == "project/vision/AD/VIDEO":
+            self.update_camera_feed(self.cam_ad_label, payload)
+
+        # 3️⃣ Vision AD RAW
+        elif topic == TOPIC_CAM_AD:
+            self.update_camera_feed(self.cam_ad_label, payload)
+
+        # 4️⃣ Vision PE RAW
+        elif topic == TOPIC_CAM_PE:
+            self.update_camera_feed(self.cam_pe_label, payload)
+
+        # 5️⃣ Log Data Processing (project/log/RAW)
         elif topic == TOPIC_LOGS:
             try:
                 log = json.loads(payload)
                 self.update_log_ui(log)
             except json.JSONDecodeError:
-                self.update_log_ui({"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "module": "SYS", "action": "RAW", "payload": payload})
-
-
-        # 3. Camera Data Processing (project/vision/AD/RAW)
-        elif topic == TOPIC_CAM_AD:
-            self.update_camera_feed(self.cam_ad_label, payload)
-
-        # 4. Camera Data Processing (project/vision/PE/RAW)
-        elif topic == TOPIC_CAM_PE:
-            self.update_camera_feed(self.cam_pe_label, payload)
+                self.update_log_ui({
+                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "module": "SYS", "action": "RAW", "payload": payload
+                })
 
 
     def update_imu_ui(self, data):
