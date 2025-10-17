@@ -346,6 +346,7 @@ class MarineDashboardApp(QWidget):
                 Qt.TransformationMode.SmoothTransformation
             )
 
+            # 기존 pixmap을 덮어씌우기 대신, 화면 잔상 최소화 방식 적용
             if label == self.cam_ad_label:
                 self.latest_ad_frame = pixmap
             elif label == self.cam_pe_label:
