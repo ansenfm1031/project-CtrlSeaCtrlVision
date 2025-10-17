@@ -44,9 +44,9 @@ client_llm = OpenAI() # 키는 환경 변수에서 자동 로드됩니다.
 
 # === 유틸리티 ===
 def now_str():
-    """UTC 시각을 'YYYY-MM-DD HH:MM:SS.ffffff' (마이크로초) 형식으로 반환합니다."""
+    """UTC 시각을 'YYYY-MM-DD HH:MM:SS'"""
     # 초 단위가 아닌 마이크로초 단위까지 포함하여 고유성을 높입니다. (Duplicate Entry 방지)
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 # === DB 연결 함수 (연결이 끊어졌을 경우를 대비) ===
 def get_db_connection():
