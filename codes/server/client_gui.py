@@ -236,14 +236,39 @@ class MarineDashboardApp(QWidget):
 
     # --- 메시지 처리 ---
     def on_mqtt_message(self, topic, payload):
-        if topic == TOPIC_IMU:
-            try:
-                data = json.loads(payload)
-                self.update_imu_ui(data)
-            except json.JSONDecodeError:
-                print(f"[IMU] JSON Error")
+        # if topic == TOPIC_IMU:
+        #     try:
+        #         data = json.loads(payload)
+        #         self.update_imu_ui(data)
+        #     except json.JSONDecodeError:
+        #         print(f"[IMU] JSON Error")
 
-        elif topic in [TOPIC_VIDEO_AD, TOPIC_CAM_AD]:
+        # elif topic in [TOPIC_VIDEO_AD, TOPIC_CAM_AD]:
+        #     self.update_camera_view(self.ad_pixmap_item, payload)
+
+        # elif topic == TOPIC_CAM_PE:  # 낙상 영상
+        #     self.update_camera_view(self.pe_pixmap_item, payload)
+        
+        # elif topic == TOPIC_LOGBOOK:  # 항해일지
+        #     try:
+        #         data = json.loads(payload)
+        #         self.update_logbook_tab(data)
+        #     except Exception as e:
+        #         print(f"[LOGBOOK Error] {e}")
+
+        # elif topic in [TOPIC_LOGS, TOPIC_PE_RAW, TOPIC_PE_ALERT, TOPIC_PE_RAW]: 
+        #     try:
+        #         log = json.loads(payload)
+        #         self.update_log_ui(log)
+        #     except json.JSONDecodeError:
+        #         # JSON 형식이 아닌 일반 로그 (STT 등)도 처리할 수 있도록 보강
+        #         self.update_log_ui({
+        #             "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        #             "module": "SYS",
+        #             "action": "RAW",
+        #             "payload": payload
+        #         })
+        if topic in [TOPIC_VIDEO_AD, TOPIC_CAM_AD]:
             self.update_camera_view(self.ad_pixmap_item, payload)
 
         elif topic == TOPIC_CAM_PE:  # 낙상 영상
@@ -256,10 +281,20 @@ class MarineDashboardApp(QWidget):
             except Exception as e:
                 print(f"[LOGBOOK Error] {e}")
 
-        elif topic in [TOPIC_LOGS, TOPIC_PE_RAW, TOPIC_PE_ALERT, TOPIC_PE_RAW]: 
+        # 🚨 3. TOPIC_LOGS (project/log/RAW)에서 IMU 데이터 처리 로직을 추가합니다.
+        # TOPIC_PE_RAW가 중복되어 있으니 하나로 정리하고 TOPIC_LOGS와 함께 묶습니다.
+        elif topic in [TOPIC_LOGS, TOPIC_PE_RAW, TOPIC_PE_ALERT]: 
             try:
                 log = json.loads(payload)
-                self.update_log_ui(log)
+                
+                # 💡 IMU 데이터라면 IMU UI도 업데이트
+                if log.get('module') == "IMU" and log.get('action') == "RAW":
+                    # log 자체가 IMU 데이터 페이로드이므로 바로 전달
+                    self.update_imu_ui(log)
+                    
+                # 💡 모든 로그 데이터 (IMU 포함)를 시스템 로그 창에 출력
+                self.update_log_ui(log) 
+                
             except json.JSONDecodeError:
                 # JSON 형식이 아닌 일반 로그 (STT 등)도 처리할 수 있도록 보강
                 self.update_log_ui({
