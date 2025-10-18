@@ -119,13 +119,30 @@ class MarineDashboardApp(QWidget):
         self.layout().addWidget(main_h_splitter)
 
         # --- 좌측 로그 창 ---
-        left_log_widget = QGroupBox("DB 실시간 시스템 로그 (events)")
-        left_vbox = QVBoxLayout(left_log_widget)
+        left_log_widget = QGroupBox("데이터 로그 보기")
+        tab_widget = QTabWidget()
+
+        # 🟦 시스템 로그 탭
         self.db_log_widget = QTextEdit()
         self.db_log_widget.setReadOnly(True)
         self.db_log_widget.setFont(QFont("Monospace", 9))
         self.db_log_widget.setStyleSheet("background-color: #0d1117; color: #58a6ff;")
-        left_vbox.addWidget(self.db_log_widget)
+
+        # 🟧 항해일지 탭
+        self.voyage_log_widget = QTextEdit()
+        self.voyage_log_widget.setReadOnly(True)
+        self.voyage_log_widget.setFont(QFont("Monospace", 9))
+        self.voyage_log_widget.setStyleSheet("background-color: #0d1117; color: #9d4edd;")
+
+        # 탭 구성
+        tab_widget.addTab(self.db_log_widget, "시스템 로그")
+        tab_widget.addTab(self.voyage_log_widget, "최근 항해일지")
+
+        # 그룹 박스에 추가
+        left_vbox = QVBoxLayout(left_log_widget)
+        left_vbox.addWidget(tab_widget)
+
+        # 메인 스플리터에 추가
         main_h_splitter.addWidget(left_log_widget)
         main_h_splitter.setSizes([400, 800])
 
@@ -153,6 +170,7 @@ class MarineDashboardApp(QWidget):
         self.cam_ad_view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.cam_ad_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.cam_ad_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.cam_ad_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # PE 카메라
         self.cam_pe_view = QGraphicsView()
@@ -164,12 +182,13 @@ class MarineDashboardApp(QWidget):
         self.cam_pe_view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.cam_pe_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.cam_pe_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.cam_pe_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         camera_hbox.addWidget(self.cam_ad_view)
         camera_hbox.addWidget(self.cam_pe_view)
 
-        right_vbox.addWidget(imu_group, 3)
-        right_vbox.addWidget(camera_group, 7)
+        right_vbox.addWidget(imu_group, 7)
+        right_vbox.addWidget(camera_group, 8)
         main_h_splitter.addWidget(right_main)
 
     # --- IMU UI ---
@@ -255,23 +274,17 @@ class MarineDashboardApp(QWidget):
             if qimg.isNull():
                 return
 
-            # ✅ 현재 View의 크기를 가져와서 그 안에 맞춤
-            view = pixmap_item.scene().views()[0]
-            view_width = view.viewport().width()
-            view_height = view.viewport().height()
-
-            # ✅ QPixmap을 View 크기에 맞게 비율 유지하여 스케일
-            pix = QPixmap.fromImage(qimg).scaled(
-                view_width, view_height,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-
+            pix = QPixmap.fromImage(qimg)
             pixmap_item.setPixmap(pix)
-            pixmap_item.setOffset(-pix.width() / 2, -pix.height() / 2)
-            pixmap_item.setPos(view_width / 2, view_height / 2)
 
-            pixmap_item.scene().update()
+            # 🔹 장면 즉시 갱신
+            scene = pixmap_item.scene()
+            scene.update()
+
+            # 🔹 화면 비율 맞춤 자동 스케일
+            view = pixmap_item.scene().views()[0]
+            view.fitInView(pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+
         except Exception as e:
             print(f"[Camera Feed Error] {e}")
 # --- Entry Point ---
