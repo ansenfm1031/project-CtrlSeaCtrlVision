@@ -332,46 +332,40 @@ class MarineDashboardApp(QWidget):
             level = log.get('level', '').upper()
             color = COLOR_MAP.get(module, COLOR_MAP["DEFAULT"])
 
-            # 🔹 1차 payload
+            # --- payload 처리 ---
             msg_payload = log.get('payload', '')
-
-            # 문자열 형태 JSON이면 디코딩
             if isinstance(msg_payload, str):
                 try:
                     msg_payload = json.loads(msg_payload)
                 except Exception:
                     pass
 
-            # 🔹 2차: payload 안에 또 payload 있을 수도 있음
+            # 중첩 payload 제거
             if isinstance(msg_payload, dict) and "payload" in msg_payload:
                 inner = msg_payload.get("payload")
                 if isinstance(inner, dict):
                     msg_payload = inner
 
-            # 🔹 message 추출
+            # --- message 추출 ---
+            msg = ""
             if isinstance(msg_payload, dict):
                 msg = msg_payload.get('message', '')
-                if not msg:
-                    if 'details' in msg_payload:
-                        details = msg_payload['details']
-                        msg = f"상세 {len(details)}건 수신" if isinstance(details, list) else "상세 데이터 수신"
-                    else:
-                        msg = "상태 데이터 수신 완료."
             elif isinstance(msg_payload, list):
                 msg = f"목록 {len(msg_payload)}건 수신"
             else:
                 msg = str(msg_payload) or "상태 데이터 수신 완료."
 
-            # 🔹 한글 로그 수준
+            # --- level/action별 한국어 레벨 텍스트 ---
             if 'CRITICAL' in level or 'ALERT' in action:
-                level_text = "긴급!"
+                level_text = "긴급"
             elif 'WARNING' in level:
-                level_text = "주의!"
+                level_text = "주의"
             elif 'INFO' in level or 'RAW' in action:
                 level_text = "정보"
             else:
                 level_text = "안전"
 
+            # --- 최종 출력 ---
             formatted = f"<span style='color:{color}'>[{ts}] ({module}) [{level_text}] {msg}</span><br>"
             self.db_log_widget.insertHtml(formatted)
             self.db_log_widget.moveCursor(self.db_log_widget.textCursor().MoveOperation.End)
