@@ -31,7 +31,6 @@ COMMAND_TOPIC = "command/summary" # 항해일지 요약 명령
 QUERY_TOPIC = "command/query" # 일반 질의 명령
 # GUI 실시간 로그 전송용 토픽
 GUI_TOPIC_LOG = "project/log/RAW"
-GUI_TOPIC_IMU = "project/IMU/RAW"
 LOGBOOK_TOPIC = "project/log/LOGBOOK"
 STATUS_TOPIC = "project/status"
 
@@ -110,25 +109,17 @@ def ensure_db_connection():
 def parse_payload_to_dict(payload: str) -> dict:
     """'키=값;키=값' 형태의 문자열을 딕셔너리로 파싱합니다. JSON 우선 파싱."""
     try:
-        data = json.loads(payload)
-        if isinstance(data, str):
-            data = json.loads(data)
-        return data
+        return json.loads(payload)
     except json.JSONDecodeError:
         # JSON이 아니면 기존 키=값; 로직을 유지합니다. 
         data = {}
         if "|" in payload:
             payload = payload.split("|", 1)[-1].strip()
-        pairs = payload.replace("|", " ").replace(",", " ").split()
+        pairs = payload.split(';')
         for pair in pairs:
             if '=' in pair:
                 k, v = pair.split('=', 1)
-            elif ':' in pair:
-                k, v = pair.split(':', 1)
                 data[k.strip()] = v.strip()
-            else:
-                continue
-            data[k,strip()] = v.strip().replace('deg', '').strip()
         return data
 
 def clean_tts_text(text: str) -> str:
@@ -362,16 +353,9 @@ def save_event_log(module: str, action: str, full_payload: str):
         # GUI 실시간 전송 추가
         gui_payload = {
             "ts": now,
-            "module": "IMU",
-            "action": "RAW",
-            "level": "INFO", # 'level' 필드를 추가하여 GUI가 [정보]를 표시하도록 합니다.
-            "payload": {       # 'payload'는 딕셔너리 형태여야 합니다.
-                # 🚨🚨🚨 이 'message' 필드가 시스템 로그에 표시될 내용입니다. 🚨🚨🚨
-                "message": f"Raw 데이터 전송 완료: Roll {roll:.2f}°, Yaw {direction}",
-                
-                # 기존 IMU 데이터 필드는 'details' 등의 키로 묶는 것이 더 명확합니다.
-                "details": payload_data # Roll/Pitch/Yaw 각도 및 desc 포함
-            }
+            "module": module,
+            "action": action,
+            "payload": full_payload
         }
         client.publish(GUI_TOPIC_LOG, json.dumps(gui_payload, ensure_ascii=False))
 
@@ -451,28 +435,24 @@ def save_vision_data(module: str, action: str, payload_dict: dict):
              
         print(f"[{now}] [DB-ERROR] events 테이블 저장 실패: {e}")
 
-# MarineServer.py의 save_imu_raw_data 함수 전체를 다음 코드로 대체하세요.
-
 def save_imu_raw_data(payload_dict: dict):
-    """imu_data 테이블에 연속적인 Pitch/Roll/Yaw 데이터를 저장하고 GUI 통합 로그로 발행"""
+    """imu_data 테이블에 연속적인 Pitch/Roll/Yaw 데이터를 저장"""
     try:
         global client
         ensure_db_connection()
         
         now = now_str()
         
-        # 1. 클라이언트가 보낸 roll, pitch, yaw 키를 사용합니다.
+        # 클라이언트가 보낸 roll, pitch, yaw 키를 사용합니다.
         roll = float(payload_dict.get('roll', 0.0) or payload_dict.get('roll_angle', 0.0)) 
         pitch = float(payload_dict.get('pitch', 0.0))
-        yaw = float(payload_dict.get('yaw', 0.0)) # 👈 누락된 변수 정의/추출
-
-        # 2. DB 저장 로직 (기존 유지)
+        yaw = float(payload_dict.get('yaw', 0.0))
+        
         sql = "INSERT INTO imu_data (ts, pitch, roll, yaw) VALUES (%s, %s, %s, %s)"
+        # 순서를 DB 테이블 순서에 따라 Pitch, Roll, Yaw 순으로 맞춥니다.
         CURSOR.execute(sql, (now, pitch, roll, yaw)) 
         DB_CONN.commit()
         print(f"[{now}] [DB-OK] Raw data saved to imu_data: R:{roll:.2f} P:{pitch:.2f} Y:{yaw:.2f}")
-        
-        # 3. GUI에 보낼 설명 필드 생성 (👈 누락된 로직 추가)
         
         # Roll 해석: 좌현(Port: -) 또는 우현(Starboard: +)
         roll_desc = f"{abs(roll):.2f}° " + ("(우현 기울임)" if roll >= 0 else "(좌현 기울임)")
@@ -481,11 +461,15 @@ def save_imu_raw_data(payload_dict: dict):
         pitch_desc = f"{abs(pitch):.2f}° " + ("(선수 들림)" if pitch >= 0 else "(선수 숙임)")
         
         # Yaw 해석: 방위각을 나침반 방향으로 변환 (예: 45° -> 북동)
-        direction = get_compass_direction(yaw) # get_compass_direction 함수는 이미 정의되어 있음
+        # ⚠️ (여기서는 간단히 각도만 표시하고, GUI에서 더 복잡한 변환을 수행할 수 있습니다.)
+        direction = get_compass_direction(yaw)
         yaw_desc = f"{yaw:.2f}° ({direction})"
 
-        # 4. GUI 전송 페이로드 구성 (payload_data 변수 정의 및 gui_payload 구성)
-        payload_data = {
+        # GUI 실시간 전송
+        gui_payload = {
+            "ts": now,
+            "module": "IMU",
+            "action": "RAW",
             "roll": roll,
             "pitch": pitch,
             "yaw": yaw,
@@ -493,26 +477,10 @@ def save_imu_raw_data(payload_dict: dict):
             "pitch_desc": pitch_desc,
             "yaw_desc": yaw_desc
         }
-        
-        gui_payload = {
-            "ts": now,
-            "module": "IMU",
-            "action": "RAW",
-            "level": "INFO", # 👈 로그창 출력을 위해 level 필드 추가
-            "payload": {
-                # 🚨🚨🚨 이 'message' 필드가 시스템 로그에 표시될 내용입니다.
-                "message": f"Raw 데이터 전송 완료: Roll {roll:.2f}° ({roll_desc}), 방향: {direction}",
-                
-                # GUI 전용 IMU 데이터는 'details' 키로 묶습니다.
-                "details": payload_data  
-            }
-        }
-        
-        # 5. GUI 통합 로그 토픽으로 발행 (토픽 통일)
         client.publish(GUI_TOPIC_LOG, json.dumps(gui_payload, ensure_ascii=False))
-        
+
     except Exception as e:
-        print(f"[{now}] [DB-ERROR] imu_data 테이블 저장 실패: {e}")
+        print(f"[DB-ERROR] imu_data 테이블 저장 실패: {e}")
 
 def save_frame_data(module, base64_str):
     """카메라 프레임(Base64 인코딩된 이미지) 저장"""
@@ -815,7 +783,7 @@ def process_and_save_data(msg):
     action = None
 
     # common patterns:
-    # - project/IMU/RAW                -> parts = [project, IMU, RAW]   (module=IMU, action=RAW)
+    # - project/imu/RAW                -> parts = [project, imu, RAW]   (module=imu, action=RAW)
     # - project/vision/AD/RAW          -> parts = [project, vision, AD, RAW] (module=AD, action=RAW)
     # - project/vision/PE/ALERT        -> parts = [project, vision, PE, ALERT]
 
@@ -912,12 +880,7 @@ def process_and_save_data(msg):
             print(f"[{now_str()}] [DB] Saved {module} RAW data to vision_data table.")
 
         else:
-            # IMU도 log로 들어올 수 있으므로 예외 허용
-            if module == "LOG" or module == "IMU":
-                save_imu_raw_data(payload_dict)
-                print(f"[{now_str()}] [INFO] Accepted IMU data via LOG topic.")
-            else:
-                print(f"[{now_str()}] [WARN] Unknown RAW module: {module}. Data discarded.")
+            print(f"[{now_str()}] [WARN] Unknown RAW module: {module}. Data discarded.")
         return
 
     # 2-3. 기타 일반 시스템/STT 이벤트 (events 테이블)
@@ -1037,4 +1000,3 @@ finally:
         DB_CONN.close()
     
     print("[EXIT] Server stopped successfully.")
-

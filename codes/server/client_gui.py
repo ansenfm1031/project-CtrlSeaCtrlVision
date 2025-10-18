@@ -354,19 +354,52 @@ class MarineDashboardApp(QWidget):
                 msg = f"목록 {len(msg_payload)}건 수신"
             else:
                 msg = str(msg_payload) or "상태 데이터 수신 완료."
+            msg = " " + msg
 
-            # --- level/action별 한국어 레벨 텍스트 ---
+            module_color = COLOR_MAP.get(module, COLOR_MAP["DEFAULT"])
+            base_color = "#E6E6E6"  # 전체 텍스트 기본색
+
+            if 'AD' in module:
+                module_color = "#FF6600"
+                module_text = "AD"
+            elif 'PE' in module:
+                module_color = "#9A71CF"
+                module_text = "PE"
+            elif 'STT' in module:
+                module_color = "#06D6A0"
+                module_text = "STT"
+            elif 'LLM' in module:
+                module_color = "#25DA0D"
+                module_text = "LLM"
+            elif 'IMU' in module:
+                module_color = "#25ACD4"
+                module_text = "IMU"
+            else:
+                module_color = "#A8A8A8"
+                module_text = module
+
             if 'CRITICAL' in level or 'ALERT' in action:
+                level_color = "#FF4C4C"
                 level_text = "긴급"
             elif 'WARNING' in level:
+                level_color = "#FFD166"
                 level_text = "주의"
             elif 'INFO' in level or 'RAW' in action:
+                level_color = "#FCFCFC"
                 level_text = "정보"
             else:
+                level_color = "#A8A8A8"
                 level_text = "안전"
 
             # --- 최종 출력 ---
-            formatted = f"<span style='color:{color}'>[{ts}] ({module}) [{level_text}] {msg}</span><br>"
+            formatted = (
+                f"<pre style='color:{base_color}; font-family:monospace;'>"
+                f"[{ts}]  "
+                f"<span style='color:{module_color}; font-weight:bold;'>{module:<6}</span>"
+                f"<span style='color:{level_color};'>[{level_text:^4}]</span>  "
+                f"{msg}</pre><br>"
+            )
+
             self.db_log_widget.insertHtml(formatted)
             self.db_log_widget.moveCursor(self.db_log_widget.textCursor().MoveOperation.End)
 
