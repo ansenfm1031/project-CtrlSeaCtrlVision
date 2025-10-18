@@ -29,7 +29,8 @@ TOPIC_PE_RAW = f"{TOPIC_BASE}/PE/RAW"       # 낙상 감지 RAW 로그
 TOPIC_PE_ALERT = f"{TOPIC_BASE}/PE/ALERT"   # 낙상 감지 ALERT 로그
 TOPIC_CAM_AD = f"{TOPIC_BASE}/AD/RAW"
 TOPIC_VIDEO_AD = f"{TOPIC_BASE}/AD/VIDEO"
-TOPIC_LOGS = f"{TOPIC_BASE}/log/RAW"
+TOPIC_LOGS = f"project/log/RAW"
+TOPIC_LOGBOOK = "project/log/LOGBOOK"
 
 def safe_b64decode(data: str):
     data = data.strip().replace('\n', '').replace('\r', '')
@@ -73,6 +74,7 @@ class MqttClient(QObject):
             client.subscribe(TOPIC_PE_RAW)     # 낙상 RAW
             client.subscribe(TOPIC_PE_ALERT)   # 낙상 ALERT
             client.subscribe(TOPIC_LOGS)
+            client.subscribe(TOPIC_LOGBOOK)
             print(f"Subscribed → {TOPIC_IMU}, {TOPIC_VIDEO_AD}, {TOPIC_CAM_PE}, {TOPIC_PE_RAW}, {TOPIC_PE_ALERT}, {TOPIC_LOGS}")
         else:
             print(f"MQTT Connection Failed with code {rc}.")
@@ -227,14 +229,22 @@ class MarineDashboardApp(QWidget):
         elif topic in [TOPIC_VIDEO_AD, TOPIC_CAM_AD]:
             self.update_camera_view(self.ad_pixmap_item, payload)
 
-        elif topic == TOPIC_CAM_PE:  # ✅ 낙상 영상
+        elif topic == TOPIC_CAM_PE:  # 낙상 영상
             self.update_camera_view(self.pe_pixmap_item, payload)
+        
+        elif topic == TOPIC_LOGBOOK:  # 항해일지
+            try:
+                data = json.loads(payload)
+                self.update_logbook_tab(data)
+            except Exception as e:
+                print(f"[LOGBOOK Error] {e}")
 
-        elif topic in [TOPIC_LOGS, TOPIC_PE_RAW, TOPIC_PE_ALERT]:  # ✅ 낙상 로그/알람
+        elif topic in [TOPIC_LOGS, TOPIC_PE_RAW, TOPIC_PE_ALERT, TOPIC_PE_RAW]: 
             try:
                 log = json.loads(payload)
                 self.update_log_ui(log)
             except json.JSONDecodeError:
+                # JSON 형식이 아닌 일반 로그 (STT 등)도 처리할 수 있도록 보강
                 self.update_log_ui({
                     "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "module": "SYS",
@@ -260,12 +270,55 @@ class MarineDashboardApp(QWidget):
             module = log.get('module', 'UNKNOWN').upper()
             action = log.get('action', 'EVENT')
             color = COLOR_MAP.get(module, COLOR_MAP["DEFAULT"])
-            msg = log.get('payload', '')
+            msg_payload = log.get('payload', '')
+            if isinstance(msg_payload, dict) or isinstance(msg_payload, list):
+                # JSON 문자열을 보기 좋게 덤프합니다.
+                msg = json.dumps(msg_payload, ensure_ascii=False, indent=2)
+            else:
+                msg = str(msg_payload)
+
+            # 로그 줄 바꿈을 <br>로 처리하여 HTML 렌더링을 개선
+            msg = msg.replace('\n', '<br>')
+            
             formatted = f"<span style='color:{color}'>[{ts}] ({module}) {action} → {msg}</span><br>"
+            
             self.db_log_widget.insertHtml(formatted)
             self.db_log_widget.moveCursor(self.db_log_widget.textCursor().MoveOperation.End)
+            
         except Exception as e:
+            # 오류 발생 시 오류 로그를 GUI에 표시
+            error_msg = f"<span style='color:red'>[LogUI Fatal Error] {e}</span><br>"
+            self.db_log_widget.insertHtml(error_msg)
             print(f"[LogUI Error] {e}")
+    
+    def update_logbook_tab(self, data):
+        """
+        LOGBOOK 토픽 수신 시 항해일지 탭에 출력
+        """
+        try:
+            entries = data.get("entries", [])
+            if not entries:
+                self.voyage_log_widget.setPlainText("최근 항해일지 데이터가 없습니다.")
+                return
+
+            text_lines = []
+            for e in entries:
+                text_lines.append(
+                    f"[{e['log_dt']}] "
+                    f"풍향: {e['wind_dir']} / 풍속: {e['wind_spd']} m/s / "
+                    f"날씨: {e['weather']} / "
+                    f"항로상태: {'ON' if e['on_route'] else 'OFF'}\n"
+                    f"운항 메모: {e['on_notes']}\n"
+                    f"특이사항: {e['ex_notes']}\n"
+                    "-----------------------------------------"
+                )
+
+            self.voyage_log_widget.setPlainText("\n".join(text_lines))
+
+        except Exception as e:
+            print(f"[update_logbook_tab Error] {e}")
+            self.voyage_log_widget.setPlainText(f"항해일지 데이터 표시 중 오류: {e}")
+
 
     # --- 카메라 업데이트 (QGraphicsView용) ---
     def update_camera_view(self, pixmap_item, base64_data):
