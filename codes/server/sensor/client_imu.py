@@ -20,8 +20,8 @@ MQTT_PASSWORD = "sksk"  # 등록된 IMU 사용자 비밀번호
 
 # 수정: 모듈 이름 및 토픽 분리
 IMU_MODULE = "IMU"
-RAW_TOPIC = "project/imu/RAW"  # 원시 데이터 (정상/INFO 레벨)
-ALERT_TOPIC = "project/imu/ALERT" # 경고/위험 데이터 (CRITICAL/WARNING 레벨)
+RAW_TOPIC = "project/IMU/RAW"  # 원시 데이터 (정상/INFO 레벨)
+ALERT_TOPIC = "project/IMU/ALERT" # 경고/위험 데이터 (CRITICAL/WARNING 레벨)
 
 # 🚨 새로운 상수: 위험 임계치
 CRITICAL_ROLL_THRESHOLD = 30.0 # Roll 각도 ±30도를 전복 위험 CRITICAL 임계치로 설정 (선박 환경에 맞게 조정 필요)
