@@ -426,6 +426,7 @@ def save_vision_data(module: str, action: str, payload_dict: dict):
 def save_imu_raw_data(payload_dict: dict):
     """imu_data 테이블에 연속적인 Pitch/Roll/Yaw 데이터를 저장"""
     try:
+        global client
         ensure_db_connection()
         
         now = now_str()
@@ -440,6 +441,16 @@ def save_imu_raw_data(payload_dict: dict):
         CURSOR.execute(sql, (now, pitch, roll, yaw)) 
         DB_CONN.commit()
         print(f"[{now}] [DB-OK] Raw data saved to imu_data: R:{roll:.2f} P:{pitch:.2f} Y:{yaw:.2f}")
+        
+        # Roll 해석: 좌현(Port: -) 또는 우현(Starboard: +)
+        roll_desc = f"{abs(roll):.2f}° " + ("(우현 기울임)" if roll >= 0 else "(좌현 기울임)")
+        
+        # Pitch 해석: 선수 들림(Up: +) 또는 선수 숙임(Down: -)
+        pitch_desc = f"{abs(pitch):.2f}° " + ("(선수 들림)" if pitch >= 0 else "(선수 숙임)")
+        
+        # Yaw 해석: 방위각을 나침반 방향으로 변환 (예: 45° -> 북동)
+        # ⚠️ (여기서는 간단히 각도만 표시하고, GUI에서 더 복잡한 변환을 수행할 수 있습니다.)
+        yaw_desc = f"{yaw:.2f}°"
 
         # GUI 실시간 전송
         gui_payload = {
@@ -448,7 +459,10 @@ def save_imu_raw_data(payload_dict: dict):
             "action": "RAW",
             "roll": roll,
             "pitch": pitch,
-            "yaw": yaw
+            "yaw": yaw,
+            "roll_desc": roll_desc,
+            "pitch_desc": pitch_desc,
+            "yaw_desc": yaw_desc
         }
         client.publish(GUI_TOPIC_LOG, json.dumps(gui_payload, ensure_ascii=False))
 

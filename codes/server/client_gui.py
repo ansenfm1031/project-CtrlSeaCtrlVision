@@ -190,25 +190,42 @@ class MarineDashboardApp(QWidget):
         camera_hbox.addWidget(self.cam_ad_view)
         camera_hbox.addWidget(self.cam_pe_view)
 
-        right_vbox.addWidget(imu_group, 7)
-        right_vbox.addWidget(camera_group, 8)
+        right_vbox.addWidget(imu_group, 4)
+        right_vbox.addWidget(camera_group, 6)
         main_h_splitter.addWidget(right_main)
 
     # --- IMU UI ---
     def _setup_imu_display(self, grid):
         data_keys = [
-            ("Roll (X축 회전)", "roll", "#2a9d8f"),
-            ("Pitch (Y축 회전)", "pitch", "#e9c46a"),
-            ("Yaw (Z축 회전)", "yaw", "#f4a261"),
+            ("좌우 기울어진 각도 (Roll)", "roll", "#2a9d8f"),
+            ("앞뒤 기울어진 각도 (Pitch)", "pitch", "#e9c46a"),
+            ("쳐다보는 방향 (Yaw)", "yaw", "#f4a261"),
         ]
+
+        row_idx = 0
         for col, (title, key, color) in enumerate(data_keys):
+            # 제목 레이블 (1행)
             t_label = QLabel(f"<b>{title}:</b>")
             grid.addWidget(t_label, 0, col*2, alignment=Qt.AlignmentFlag.AlignRight)
+            # 값 레이블 (1행)
             v_label = QLabel("0.00")
             v_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-            v_label.setStyleSheet(f"color: {color}; padding: 5px;")
-            grid.addWidget(v_label, 0, col*2 + 1)
+            # 각도 값 옆에 도(°) 기호를 표시하기 위해 우측 패딩을 줄입니다.
+            v_label.setStyleSheet(f"color: {color}; padding: 5px 0px 5px 5px;") 
+            grid.addWidget(v_label, row_idx, col*2 + 1)
             self.imu_labels[key] = v_label
+            
+            # 설명 레이블 추가 (2행)
+            row_idx += 1
+            desc_label = QLabel("데이터 없음")
+            desc_label.setFont(QFont("Arial", 10))
+            # 스타일을 좀 더 잘 보이게 조정했습니다.
+            desc_label.setStyleSheet(f"color: {color}; font-style: italic; padding: 2px; border: 1px solid {color}; border-radius: 3px;") 
+            # 가로로 2칸을 모두 차지하도록 통합합니다.
+            grid.addWidget(desc_label, row_idx, col*2, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter) 
+            self.imu_labels[f'{key}_desc'] = desc_label # 'roll_desc' 등을 저장
+            
+            row_idx -= 1 # 다음 센서는 다시 1행으로 돌아가도록 (2칸을 사용하여 총 2줄)
 
     # --- MQTT 설정 ---
     def setup_mqtt(self):
@@ -258,10 +275,16 @@ class MarineDashboardApp(QWidget):
             if key in data:
                 try:
                     val = float(str(data[key]))
-                    self.imu_labels[key].setText(f"{val:.2f}")
+                    self.imu_labels[key].setText(f"{val:.2f}°")
                 except Exception as e:
                     print(f"[IMU Error] {key}: {e}")
                     self.imu_labels[key].setText("ERR")
+            
+            # 설명 필드 업데이트 (새로 추가)
+            desc_key = f'{key}_desc'
+            if desc_key in self.imu_labels and desc_key in data:
+                # 서버에서 가공한 직관적인 설명 텍스트를 바로 표시
+                self.imu_labels[desc_key].setText(str(data[desc_key]))
 
     # --- 로그 UI 업데이트 ---
     def update_log_ui(self, log):
