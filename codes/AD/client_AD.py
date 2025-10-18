@@ -383,50 +383,35 @@ def run_inference_and_publish(client):
     # 6-1. 기본 RAW 데이터 (모든 탐지 결과 포함)
     raw_data = {
         "timestamp": now_str(),
-        "module": AD_MODULE, 
-        "level": "INFO",     
+        "module": AD_MODULE,
+        "level": "INFO",
         "detections": detections,
         "total_count": len(detections),
-        "anomaly_count": sum(1 for d in detections if d['anomaly']),
+        "anomaly_count": sum(1 for d in detections if d['anomaly'])
     }
-    raw_payload = json.dumps(raw_data)
+    raw_payload = json.dumps(raw_data, ensure_ascii=False)
     client.publish(RAW_TOPIC, raw_payload, qos=0)
-    # 시연용 로그: RAW 데이터 발행 
-    
+
     # 6-2. 경고 이벤트 (Anomaly나 중요 객체 감지 시)
     if anomaly_detected or critical_ship_detected:
-        
-        # 레벨 및 메시지 결정 로직
-        if anomaly_detected or critical_ship_detected:
-            # 이상 징후나 충돌 위험(Ship 감지)이 있으면 CRITICAL
-            alert_level = "CRITICAL"
-            anomaly_count = sum(1 for d in detections if d['anomaly'])
-            summary_parts = []
-            if critical_ship_detected: summary_parts.append("선박 충돌 위험")
-            if anomaly_count > 0: summary_parts.append(f"{anomaly_count}개 이상 징후")
-            
-            alert_summary = f"🚨 긴급! {', '.join(summary_parts)} 감지."
-            
-        elif any(d['object_type'] in ['Reef'] for d in detections): # Reef는 WARNING으로 처리
-            alert_level = "WARNING"
-            alert_summary = f"⚠️ 항해 주의! 암초(Reef) 감지됨."
-        else:
-            # CRITICAL도 WARNING도 아니면 발행하지 않음 (예: 단순 Lighthouse)
-            time.sleep(0.03) # CPU 점유율 관리
-            return 
+        alert_level = "CRITICAL"
+        summary = []
+        if critical_ship_detected:
+            summary.append("선박 충돌 위험")
+        if anomaly_detected:
+            summary.append(f"{sum(1 for d in detections if d['anomaly'])}개 이상 징후")
+        alert_msg = f"🚨 긴급! {', '.join(summary)} 감지."
 
         alert_data = {
             "timestamp": now_str(),
-            "module": AD_MODULE, 
-            "level": alert_level, 
-            "message": alert_summary,
-            "details": [d for d in detections if d['anomaly'] or d['object_type'] in ['Ship', 'Reef']],
+            "module": AD_MODULE,
+            "level": alert_level,
+            "message": alert_msg,
+            "details": [d for d in detections if d['anomaly'] or d['object_type'] == "Ship"]
         }
-        alert_payload = json.dumps(alert_data)
+        alert_payload = json.dumps(alert_data, ensure_ascii=False)
         client.publish(ALERT_TOPIC, alert_payload, qos=1)
-        # 시연용 로그: 경고 발행
-        print(f"[{now_str()}] 📢 {alert_level} PUB :: {ALERT_TOPIC} → {alert_summary}")
-        
+        print(f"[{now_str()}] 📢 {alert_level} PUB :: {ALERT_TOPIC} → {alert_msg}")    
     
     time.sleep(0.01) # 0.01초 대기 (CPU 점유율 관리)
 

@@ -67,7 +67,7 @@ class MqttClient(QObject):
         client.subscribe(TOPIC_VIDEO_AD)
         if rc == 0:
             print("MQTT Broker Connected Successfully.")
-            client.subscribe(TOPIC_IMU)
+            # client.subscribe(TOPIC_IMU)
             client.subscribe(TOPIC_CAM_AD)
             client.subscribe(TOPIC_VIDEO_AD)
             client.subscribe(TOPIC_CAM_PE)     # FALL/VIDEO
@@ -288,6 +288,7 @@ class MarineDashboardApp(QWidget):
                 log = json.loads(payload)
                 
                 # 💡 IMU 데이터라면 IMU UI도 업데이트
+                # 🚨🚨🚨 이 조건문이 정확해야 합니다. 🚨🚨🚨
                 if log.get('module') == "IMU" and log.get('action') == "RAW":
                     # log 자체가 IMU 데이터 페이로드이므로 바로 전달
                     self.update_imu_ui(log)
