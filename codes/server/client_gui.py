@@ -332,20 +332,29 @@ class MarineDashboardApp(QWidget):
             color = COLOR_MAP.get(module, COLOR_MAP["DEFAULT"])
             level = log.get('level', '').upper()
 
-            # --- 1️⃣ 메시지 추출 로직 ---
-            message = ""
-            if isinstance(log.get('payload'), dict):
-                # payload가 dict인 경우 (RAW 데이터 JSON)
-                message = log['payload'].get('message', '') or json.dumps(log['payload'], ensure_ascii=False)
+            msg_payload = log.get('payload', '')
+            msg = ""
+
+            # ✅ payload가 dict일 경우 핵심 메시지만 추출
+            if isinstance(msg_payload, dict):
+                # 가장 중요한 "message" 키만 우선 표시
+                msg = msg_payload.get('message', '')
+                # message가 비어 있고 details가 있으면 요약 생성
+                if not msg and 'details' in msg_payload:
+                    details = msg_payload['details']
+                    if isinstance(details, list) and len(details) > 0:
+                        msg = f"상세 {len(details)}건 수신"
+                    else:
+                        msg = "상세 데이터 수신"
+                # 그래도 비어있으면 RAW 기본 메시지
+                if not msg.strip():
+                    msg = "상태 데이터 수신 완료."
+            elif isinstance(msg_payload, list):
+                msg = f"목록 {len(msg_payload)}건 수신"
             else:
-                message = log.get('message') or log.get('payload') or ""
+                msg = str(msg_payload) or "상태 데이터 수신 완료."
 
-            # --- 2️⃣ RAW 로그 처리 ---
-            # RAW인데 message가 비어있다면 fallback 문장 생성
-            if not message and 'RAW' in action:
-                message = "상태 데이터 수신 완료."
-
-            # --- 3️⃣ level/action에 따른 이모지 설정 ---
+            # 🚨 level/action별 이모지
             if 'CRITICAL' in level or 'ALERT' in action:
                 prefix = "🚨 "
             elif 'WARNING' in level:
@@ -355,12 +364,13 @@ class MarineDashboardApp(QWidget):
             else:
                 prefix = ""
 
-            # --- 4️⃣ 최종 문장 구성 ---
-            formatted = f"<span style='color:{color}'>[{ts}] ({module}) {prefix}{message}</span><br>"
+            formatted = f"<span style='color:{color}'>[{ts}] ({module}) {prefix}{msg}</span><br>"
             self.db_log_widget.insertHtml(formatted)
             self.db_log_widget.moveCursor(self.db_log_widget.textCursor().MoveOperation.End)
 
         except Exception as e:
+            error_msg = f"<span style='color:red'>[LogUI Fatal Error] {e}</span><br>"
+            self.db_log_widget.insertHtml(error_msg)
             print(f"[LogUI Error] {e}")
     
     def update_logbook_tab(self, data):
