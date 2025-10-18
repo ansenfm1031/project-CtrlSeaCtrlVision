@@ -329,42 +329,44 @@ class MarineDashboardApp(QWidget):
             ts = datetime.now().strftime("%H:%M:%S")
             module = log.get('module', 'UNKNOWN').upper()
             action = log.get('action', '').upper()
-            color = COLOR_MAP.get(module, COLOR_MAP["DEFAULT"])
             level = log.get('level', '').upper()
+            color = COLOR_MAP.get(module, COLOR_MAP["DEFAULT"])
 
             msg_payload = log.get('payload', '')
-            msg = ""
 
-            # ✅ payload가 dict일 경우 핵심 메시지만 추출
+            # payload가 문자열 JSON일 수도 있으므로 디코딩 시도
+            if isinstance(msg_payload, str):
+                try:
+                    msg_payload = json.loads(msg_payload)
+                except Exception:
+                    pass
+
+            # 핵심 메시지 추출
             if isinstance(msg_payload, dict):
-                # 가장 중요한 "message" 키만 우선 표시
                 msg = msg_payload.get('message', '')
-                # message가 비어 있고 details가 있으면 요약 생성
-                if not msg and 'details' in msg_payload:
-                    details = msg_payload['details']
-                    if isinstance(details, list) and len(details) > 0:
-                        msg = f"상세 {len(details)}건 수신"
+                if not msg:
+                    if 'details' in msg_payload:
+                        details = msg_payload['details']
+                        msg = f"상세 {len(details)}건 수신" if isinstance(details, list) else "상세 데이터 수신"
                     else:
-                        msg = "상세 데이터 수신"
-                # 그래도 비어있으면 RAW 기본 메시지
-                if not msg.strip():
-                    msg = "상태 데이터 수신 완료."
+                        msg = "상태 데이터 수신 완료."
             elif isinstance(msg_payload, list):
                 msg = f"목록 {len(msg_payload)}건 수신"
             else:
                 msg = str(msg_payload) or "상태 데이터 수신 완료."
 
-            # 🚨 level/action별 이모지
+            # level/action별 한글 중요도
             if 'CRITICAL' in level or 'ALERT' in action:
-                prefix = "🚨 "
+                level_text = "긴급"
             elif 'WARNING' in level:
-                prefix = "⚠️ "
-            elif 'INFO' in level:
-                prefix = "ℹ️ "
+                level_text = "주의"
+            elif 'INFO' in level or 'RAW' in action:
+                level_text = "정보"
             else:
-                prefix = ""
+                level_text = "안전"
 
-            formatted = f"<span style='color:{color}'>[{ts}] ({module}) {prefix}{msg}</span><br>"
+            # 최종 출력 형식
+            formatted = f"<span style='color:{color}'>[{ts}] ({module}) [{level_text}] {msg}</span><br>"
             self.db_log_widget.insertHtml(formatted)
             self.db_log_widget.moveCursor(self.db_log_widget.textCursor().MoveOperation.End)
 

@@ -702,6 +702,21 @@ def main():
                     "detections": raw_detections_list,
                     "person_detected": is_person_detected
                 }
+
+                # 사람이 감지되지 않은 경우
+                if not is_person_detected:
+                    raw_payload["message"] = "사람이 감지되지 않음."
+                else:
+                    # 낙상 중인 사람 수 계산
+                    fall_count = sum(1 for d in raw_detections_list if d["action"] == "Fall Down")
+                    total_count = len(raw_detections_list)
+                    if fall_count > 0:
+                        raw_payload["message"] = f"{total_count}명 중 {fall_count}명 낙상 감지됨."
+                    else:
+                        raw_payload["message"] = f"{total_count}명 감지됨. 이상 없음."
+
+                mqtt_client.publish(RAW_TOPIC, json.dumps(raw_payload, ensure_ascii=False), qos=0)
+                
                 publish_mqtt_message(mqtt_client, RAW_TOPIC, raw_payload)
                 # ⭐️ 시연용 로그: RAW 데이터 발행 ⭐️
                 end_time = time.time()

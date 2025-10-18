@@ -387,7 +387,8 @@ def run_inference_and_publish(client):
         "level": "INFO",
         "detections": detections,
         "total_count": len(detections),
-        "anomaly_count": sum(1 for d in detections if d['anomaly'])
+        "anomaly_count": sum(1 for d in detections if d['anomaly']),
+        "message": f"{len(detections)}개 객체 감지됨 (이상 {sum(1 for d in detections if d['anomaly'])}개)"
     }
     raw_payload = json.dumps(raw_data, ensure_ascii=False)
     client.publish(RAW_TOPIC, raw_payload, qos=0)
