@@ -401,7 +401,7 @@ def run_inference_and_publish(client):
             summary.append("선박 충돌 위험")
         if anomaly_detected:
             summary.append(f"{sum(1 for d in detections if d['anomaly'])}개 이상 징후")
-        alert_msg = f"🚨 긴급! {', '.join(summary)} 감지."
+        alert_msg = f"긴급! {', '.join(summary)} 감지."
 
         alert_data = {
             "timestamp": now_str(),
