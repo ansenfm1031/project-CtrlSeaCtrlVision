@@ -7,7 +7,8 @@ from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
     QSplitter, QGroupBox, QLabel, QTextEdit, 
-    QGridLayout, QSizePolicy, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
+    QGridLayout, QSizePolicy, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
+    QTabWidget
 )
 from PyQt6.QtGui import QFont, QFontDatabase, QImage, QPixmap
 from PyQt6.QtCore import Qt, QObject, pyqtSignal, QSize
