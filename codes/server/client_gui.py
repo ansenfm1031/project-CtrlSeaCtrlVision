@@ -324,30 +324,43 @@ class MarineDashboardApp(QWidget):
 
     # --- 로그 UI 업데이트 ---
     def update_log_ui(self, log):
+        """시스템 로그 탭에 사람이 읽기 좋은 형태로 출력"""
         try:
-            ts = log.get('ts', datetime.now().strftime("%H:%M:%S"))
+            ts = datetime.now().strftime("%H:%M:%S")
             module = log.get('module', 'UNKNOWN').upper()
-            action = log.get('action', 'EVENT')
+            action = log.get('action', '').upper()
             color = COLOR_MAP.get(module, COLOR_MAP["DEFAULT"])
-            msg_payload = log.get('payload', '')
-            if isinstance(msg_payload, dict) or isinstance(msg_payload, list):
-                # JSON 문자열을 보기 좋게 덤프합니다.
-                msg = json.dumps(msg_payload, ensure_ascii=False, indent=2)
-            else:
-                msg = str(msg_payload)
+            level = log.get('level', '').upper()
 
-            # 로그 줄 바꿈을 <br>로 처리하여 HTML 렌더링을 개선
-            msg = msg.replace('\n', '<br>')
-            
-            formatted = f"<span style='color:{color}'>[{ts}] ({module}) {action} → {msg}</span><br>"
-            
+            # --- 1️⃣ 메시지 추출 로직 ---
+            message = ""
+            if isinstance(log.get('payload'), dict):
+                # payload가 dict인 경우 (RAW 데이터 JSON)
+                message = log['payload'].get('message', '') or json.dumps(log['payload'], ensure_ascii=False)
+            else:
+                message = log.get('message') or log.get('payload') or ""
+
+            # --- 2️⃣ RAW 로그 처리 ---
+            # RAW인데 message가 비어있다면 fallback 문장 생성
+            if not message and 'RAW' in action:
+                message = "상태 데이터 수신 완료."
+
+            # --- 3️⃣ level/action에 따른 이모지 설정 ---
+            if 'CRITICAL' in level or 'ALERT' in action:
+                prefix = "🚨 "
+            elif 'WARNING' in level:
+                prefix = "⚠️ "
+            elif 'INFO' in level:
+                prefix = "ℹ️ "
+            else:
+                prefix = ""
+
+            # --- 4️⃣ 최종 문장 구성 ---
+            formatted = f"<span style='color:{color}'>[{ts}] ({module}) {prefix}{message}</span><br>"
             self.db_log_widget.insertHtml(formatted)
             self.db_log_widget.moveCursor(self.db_log_widget.textCursor().MoveOperation.End)
-            
+
         except Exception as e:
-            # 오류 발생 시 오류 로그를 GUI에 표시
-            error_msg = f"<span style='color:red'>[LogUI Fatal Error] {e}</span><br>"
-            self.db_log_widget.insertHtml(error_msg)
             print(f"[LogUI Error] {e}")
     
     def update_logbook_tab(self, data):

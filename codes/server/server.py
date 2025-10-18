@@ -247,6 +247,18 @@ def check_speaker():
         if os.path.exists(TEST_FILENAME):
             os.remove(TEST_FILENAME)
 
+def get_compass_direction(yaw_angle: float) -> str:
+    """Yaw 각도를 8방향 나침반 문자로 변환합니다 (N, NE, E, SE, S, SW, W, NW)."""
+    # 0도 ~ 360도 범위로 보정 (IMU 데이터는 보통 이 범위에 있으나, 안전을 위해)
+    yaw_angle = yaw_angle % 360
+    
+    # 22.5도 간격으로 8방향 구분
+    directions = ["북", "북동", "동", "남동", "남", "남서", "서", "북서"]
+    # 22.5를 더한 후 45로 나누어 인덱스를 얻습니다. (북쪽(0) 주변을 처리하기 위함)
+    index = int((yaw_angle + 22.5) // 45) % 8
+    
+    return directions[index]
+
 def publish_logbook_entries(mqtt_client):
     try:
         conn = pymysql.connect(
@@ -450,7 +462,8 @@ def save_imu_raw_data(payload_dict: dict):
         
         # Yaw 해석: 방위각을 나침반 방향으로 변환 (예: 45° -> 북동)
         # ⚠️ (여기서는 간단히 각도만 표시하고, GUI에서 더 복잡한 변환을 수행할 수 있습니다.)
-        yaw_desc = f"{yaw:.2f}°"
+        direction = get_compass_direction(yaw)
+        yaw_desc = f"{yaw:.2f}° ({direction})"
 
         # GUI 실시간 전송
         gui_payload = {
