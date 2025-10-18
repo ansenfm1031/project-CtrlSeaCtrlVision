@@ -31,6 +31,7 @@ COMMAND_TOPIC = "command/summary" # 항해일지 요약 명령
 QUERY_TOPIC = "command/query" # 일반 질의 명령
 # GUI 실시간 로그 전송용 토픽
 GUI_TOPIC_LOG = "project/log/RAW"
+LOGBOOK_TOPIC = "project/log/LOGBOOK"
 
 # === 오디오 디버깅 설정 ===
 # STT 초기화 실패 시 어떤 장치가 사용 가능한지 확인하기 위한 변수
@@ -244,6 +245,59 @@ def check_speaker():
     finally:
         if os.path.exists(TEST_FILENAME):
             os.remove(TEST_FILENAME)
+
+def publish_logbook_entries(mqtt_client):
+    try:
+        conn = pymysql.connect(
+            host="localhost",
+            user="marine_user",
+            password="marine_pw",  # 실제 비밀번호
+            database="marine_system",
+            charset="utf8"
+        )
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM logbook ORDER BY id DESC LIMIT 10;")
+        rows = cur.fetchall()
+        conn.close()
+
+        entries = []
+        for r in rows:
+            entries.append({
+                "id": r[0],
+                "log_dt": str(r[1]),
+                "sail_time": str(r[2]),
+                "wind_dir": r[3],
+                "wind_spd": r[4],
+                "weather": r[5],
+                "on_route": bool(r[6]),
+                "on_notes": r[7],
+                "ex_notes": r[8]
+            })
+
+        payload = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "module": "SERVER",
+            "type": "LOGBOOK",
+            "entries": entries
+        }
+
+        mqtt_client.publish(LOGBOOK_TOPIC, json.dumps(payload, ensure_ascii=False))
+        print(f"[{datetime.now()}] ✅ 항해일지(LOGBOOK) 데이터 발행 완료 ({len(entries)}건)")
+
+    except Exception as e:
+        print(f"[LOGBOOK ERROR] {e}")
+
+def logbook_publisher_loop(mqtt_client, interval_sec=30):
+    """
+    항해일지(LOGBOOK) 데이터를 일정 주기(interval_sec)마다 발행합니다.
+    메인 루프와 독립적으로 동작하며, MQTT 브로커에 연결된 상태를 유지합니다.
+    """
+    while True:
+        try:
+            publish_logbook_entries(mqtt_client)
+        except Exception as e:
+            print(f"[LOGBOOK-THREAD] Error while publishing logbook: {e}")
+        time.sleep(interval_sec)
 
 # === DB 저장 함수 (DB_CONN, CURSOR 사용) ===
 def save_event_log(module: str, action: str, full_payload: str):
@@ -865,6 +919,12 @@ try:
     # 3. 스피커 테스트 (TTS 기능 확인)
     check_speaker()
     
+    # 3.5. 항해일지 발행 스레드 시작 (30초마다)
+    logbook_thread = threading.Thread(target=logbook_publisher_loop, args=(client, 30))
+    logbook_thread.daemon = True
+    logbook_thread.start()
+    print("[INFO] LOGBOOK publishing thread started (interval = 30s).")
+
     # 4. 메인 MQTT 루프 실행 (STT와 동시 실행)
     print("[INFO] Server is running. Entering MQTT loop_forever(). Press Ctrl+C to stop.")
     client.loop_forever()
