@@ -32,6 +32,7 @@ QUERY_TOPIC = "command/query" # 일반 질의 명령
 # GUI 실시간 로그 전송용 토픽
 GUI_TOPIC_LOG = "project/log/RAW"
 LOGBOOK_TOPIC = "project/log/LOGBOOK"
+STATUS_TOPIC = "project/status"
 
 # === 오디오 디버깅 설정 ===
 # STT 초기화 실패 시 어떤 장치가 사용 가능한지 확인하기 위한 변수
@@ -251,9 +252,9 @@ def publish_logbook_entries(mqtt_client):
         conn = pymysql.connect(
             host="localhost",
             user="marine_user",
-            password="marine_pw",  # 실제 비밀번호
+            password="sksk",  # 실제 비밀번호
             database="marine_system",
-            charset="utf8"
+            charset="utf8mb4"
         )
         cur = conn.cursor()
         cur.execute("SELECT * FROM logbook ORDER BY id DESC LIMIT 10;")
@@ -287,22 +288,48 @@ def publish_logbook_entries(mqtt_client):
     except Exception as e:
         print(f"[LOGBOOK ERROR] {e}")
 
-def logbook_publisher_loop(mqtt_client, interval_sec=30):
-    """
-    항해일지(LOGBOOK) 데이터를 일정 주기(interval_sec)마다 발행합니다.
-    메인 루프와 독립적으로 동작하며, MQTT 브로커에 연결된 상태를 유지합니다.
-    """
-    while True:
+def save_llm_report(report_text: str):
+    """LLM이 생성한 보고서를 logbook 테이블의 on_notes 필드에 저장합니다."""
+    try:
+        ensure_db_connection()
+        
+        now = now_str()
+        
+        # logbook 테이블에 삽입하는 SQL 쿼리 (보고서 텍스트만 on_notes에 저장)
+        sql = """
+            INSERT INTO logbook 
+            (sail_time, wind_dir, wind_spd, weather, on_route, on_notes, ex_notes) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        # NOTE: 보고서 전용 항목이므로 나머지 필드는 NULL로 채웁니다.
+        CURSOR.execute(sql, (
+            None,      # sail_time
+            'LLM_REPORT', # wind_dir (보고서 식별자로 활용)
+            None,      # wind_spd
+            'OK',      # weather (기록이 성공했음을 표시)
+            1,         # on_route (기본값)
+            report_text, # <<<< LLM 요약 보고서 저장!
+            None       # ex_notes
+        ))
+        DB_CONN.commit()
+        print(f"[{now}] [DB-OK] ✅ LLM Report saved to logbook.")
+
+        # GUI에 최신 logbook 데이터를 발행하여 갱신
+        publish_logbook_entries(client)
+
+    except Exception as e:
         try:
-            publish_logbook_entries(mqtt_client)
-        except Exception as e:
-            print(f"[LOGBOOK-THREAD] Error while publishing logbook: {e}")
-        time.sleep(interval_sec)
+            DB_CONN.rollback()
+        except Exception:
+             pass
+        print(f"[{now}] [DB-ERROR] ❌ logbook 테이블 저장 실패 (LLM Report): {e}")
 
 # === DB 저장 함수 (DB_CONN, CURSOR 사용) ===
 def save_event_log(module: str, action: str, full_payload: str):
     """events 테이블에 일반 로그, STT, 모든 CRITICAL/WARNING 로그를 저장"""
     try:
+        global client
         ensure_db_connection()
 
         now = now_str()
@@ -867,6 +894,10 @@ def on_message(client, userdata, msg):
             
             summary = summarize_logs(logs, imu_stats, minutes) 
             text_to_speech(summary)
+            
+            # 이곳에 LLM 보고서 저장 함수를 추가합니다.
+            save_llm_report(summary)
+
             # LLM 결과 TTS 발화 후 DB에 기록
             save_event_log("LLM", "SAY", summary)
 
@@ -919,12 +950,6 @@ try:
     # 3. 스피커 테스트 (TTS 기능 확인)
     check_speaker()
     
-    # 3.5. 항해일지 발행 스레드 시작 (30초마다)
-    logbook_thread = threading.Thread(target=logbook_publisher_loop, args=(client, 30))
-    logbook_thread.daemon = True
-    logbook_thread.start()
-    print("[INFO] LOGBOOK publishing thread started (interval = 30s).")
-
     # 4. 메인 MQTT 루프 실행 (STT와 동시 실행)
     print("[INFO] Server is running. Entering MQTT loop_forever(). Press Ctrl+C to stop.")
     client.loop_forever()
