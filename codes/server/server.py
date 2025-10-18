@@ -466,16 +466,20 @@ def save_imu_raw_data(payload_dict: dict):
         yaw_desc = f"{yaw:.2f}° ({direction})"
 
         # GUI 실시간 전송
-        gui_payload = {
-            "ts": now,
-            "module": "IMU",
-            "action": "RAW",
+        payload_data = {
             "roll": roll,
             "pitch": pitch,
             "yaw": yaw,
             "roll_desc": roll_desc,
             "pitch_desc": pitch_desc,
             "yaw_desc": yaw_desc
+        }
+
+        gui_payload = {
+            "ts": now,
+            "module": "IMU",
+            "action": "RAW",
+            "payload": payload_data  # ✅ 구조적으로 계층화
         }
         client.publish(GUI_TOPIC_LOG, json.dumps(gui_payload, ensure_ascii=False))
 
@@ -904,7 +908,7 @@ def on_message(client, userdata, msg):
             
             # Summary 요청이 들어왔음을 이벤트 로그에 기록
             minutes_payload = payload.strip()
-            save_event_log("USER_STT", "SUMMARY_REQUEST", f"Request for summary (Payload: {minutes_payload})")
+            save_event_log("STT", "SUMMARY_REQUEST", f"Request for summary (Payload: {minutes_payload})")
 
             minutes = 15 # 기본값은 15분
             try:
@@ -932,7 +936,7 @@ def on_message(client, userdata, msg):
              # 일반 쿼리는 LLM에 바로 질의 후 답변을 TTS로 발화합니다.
              print(f"[{now}] [CMD] Query request received → {payload}")
              # 사용자 쿼리를 이벤트 로그에 기록
-             save_event_log("USER_STT", "QUERY", payload)
+             save_event_log("STT", "QUERY", payload)
              
              # LLM 질의
              response = query_llm(payload)
@@ -1000,3 +1004,4 @@ finally:
         DB_CONN.close()
     
     print("[EXIT] Server stopped successfully.")
+
