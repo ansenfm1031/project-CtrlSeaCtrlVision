@@ -150,6 +150,9 @@ class MarineDashboardApp(QWidget):
         self.ad_pixmap_item = QGraphicsPixmapItem()
         self.ad_scene.addItem(self.ad_pixmap_item)
         self.cam_ad_view.setStyleSheet("border: 2px solid #2a9d8f; background-color: black;")
+        self.cam_ad_view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.cam_ad_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.cam_ad_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         # PE 카메라
         self.cam_pe_view = QGraphicsView()
@@ -158,6 +161,9 @@ class MarineDashboardApp(QWidget):
         self.pe_pixmap_item = QGraphicsPixmapItem()
         self.pe_scene.addItem(self.pe_pixmap_item)
         self.cam_pe_view.setStyleSheet("border: 2px solid #e76f51; background-color: black;")
+        self.cam_pe_view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.cam_pe_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.cam_pe_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         camera_hbox.addWidget(self.cam_ad_view)
         camera_hbox.addWidget(self.cam_pe_view)
@@ -248,12 +254,26 @@ class MarineDashboardApp(QWidget):
             qimg = QImage.fromData(img_data)
             if qimg.isNull():
                 return
-            pix = QPixmap.fromImage(qimg).scaled(640, 480, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
+
+            # ✅ 현재 View의 크기를 가져와서 그 안에 맞춤
+            view = pixmap_item.scene().views()[0]
+            view_width = view.viewport().width()
+            view_height = view.viewport().height()
+
+            # ✅ QPixmap을 View 크기에 맞게 비율 유지하여 스케일
+            pix = QPixmap.fromImage(qimg).scaled(
+                view_width, view_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+
             pixmap_item.setPixmap(pix)
-            pixmap_item.scene().update()  # 즉시 렌더링
+            pixmap_item.setOffset(-pix.width() / 2, -pix.height() / 2)
+            pixmap_item.setPos(view_width / 2, view_height / 2)
+
+            pixmap_item.scene().update()
         except Exception as e:
             print(f"[Camera Feed Error] {e}")
-
 # --- Entry Point ---
 if __name__ == '__main__':
     if os.environ.get('XDG_RUNTIME_DIR') is None and 'root' in os.environ.get('HOME', ''):
