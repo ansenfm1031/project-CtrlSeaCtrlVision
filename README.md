@@ -7,7 +7,22 @@
 - 선원 안전 확보  
 - 자동 항해 일지 작성 및 브리핑
 
----
+**Team Ctrl + Sea**
+> PM 문두르  
+> 류균봉 · 김찬미 · 나지훈 · 이환중
 
-## 팀원
+| 역할 | 담당 |
+|------|------|
+| Image Enhancement | Dehazing |
+| Pose Estimation | Fall Detection |
+| Server / MQTT / GUI | LLM / STT / TTS |
+| Object Detection | Anomaly Detection |
+
+## 2. 팀원 소개
+| 역할 | 담당 |
+|------|------|
+| Image Enhancement | Dehazing |
+| Pose Estimation | Fall Detection |
+| Server / MQTT / GUI | LLM / STT / TTS |
+| Object Detection | Anomaly Detection |
 **[문두르]** **[류균봉]** **[김찬미]** **[나지훈]** **[이환중]**
