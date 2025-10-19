@@ -31,6 +31,8 @@ COMMAND_TOPIC = "command/summary" # 항해일지 요약 명령
 QUERY_TOPIC = "command/query" # 일반 질의 명령
 # GUI 실시간 로그 전송용 토픽
 GUI_TOPIC_LOG = "project/log/RAW"
+LOGBOOK_TOPIC = "project/log/LOGBOOK"
+STATUS_TOPIC = "project/status"
 
 # === 오디오 디버깅 설정 ===
 # STT 초기화 실패 시 어떤 장치가 사용 가능한지 확인하기 위한 변수
@@ -245,10 +247,101 @@ def check_speaker():
         if os.path.exists(TEST_FILENAME):
             os.remove(TEST_FILENAME)
 
+def get_compass_direction(yaw_angle: float) -> str:
+    """Yaw 각도를 8방향 나침반 문자로 변환합니다 (N, NE, E, SE, S, SW, W, NW)."""
+    # 0도 ~ 360도 범위로 보정 (IMU 데이터는 보통 이 범위에 있으나, 안전을 위해)
+    yaw_angle = yaw_angle % 360
+    
+    # 22.5도 간격으로 8방향 구분
+    directions = ["북", "북동", "동", "남동", "남", "남서", "서", "북서"]
+    # 22.5를 더한 후 45로 나누어 인덱스를 얻습니다. (북쪽(0) 주변을 처리하기 위함)
+    index = int((yaw_angle + 22.5) // 45) % 8
+    
+    return directions[index]
+
+def publish_logbook_entries(mqtt_client):
+    try:
+        conn = pymysql.connect(
+            host="localhost",
+            user="marine_user",
+            password="sksk",  # 실제 비밀번호
+            database="marine_system",
+            charset="utf8mb4"
+        )
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM logbook ORDER BY id DESC LIMIT 10;")
+        rows = cur.fetchall()
+        conn.close()
+
+        entries = []
+        for r in rows:
+            entries.append({
+                "id": r[0],
+                "log_dt": str(r[1]),
+                "sail_time": str(r[2]),
+                "wind_dir": r[3],
+                "wind_spd": r[4],
+                "weather": r[5],
+                "on_route": bool(r[6]),
+                "on_notes": r[7],
+                "ex_notes": r[8]
+            })
+
+        payload = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "module": "SERVER",
+            "type": "LOGBOOK",
+            "entries": entries
+        }
+
+        mqtt_client.publish(LOGBOOK_TOPIC, json.dumps(payload, ensure_ascii=False))
+        print(f"[{datetime.now()}] ✅ 항해일지(LOGBOOK) 데이터 발행 완료 ({len(entries)}건)")
+
+    except Exception as e:
+        print(f"[LOGBOOK ERROR] {e}")
+
+def save_llm_report(report_text: str):
+    """LLM이 생성한 보고서를 logbook 테이블의 on_notes 필드에 저장합니다."""
+    try:
+        ensure_db_connection()
+        
+        now = now_str()
+        
+        # logbook 테이블에 삽입하는 SQL 쿼리 (보고서 텍스트만 on_notes에 저장)
+        sql = """
+            INSERT INTO logbook 
+            (sail_time, wind_dir, wind_spd, weather, on_route, on_notes, ex_notes) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        # NOTE: 보고서 전용 항목이므로 나머지 필드는 NULL로 채웁니다.
+        CURSOR.execute(sql, (
+            None,      # sail_time
+            'LLM_REPORT', # wind_dir (보고서 식별자로 활용)
+            None,      # wind_spd
+            'OK',      # weather (기록이 성공했음을 표시)
+            1,         # on_route (기본값)
+            report_text, # <<<< LLM 요약 보고서 저장!
+            None       # ex_notes
+        ))
+        DB_CONN.commit()
+        print(f"[{now}] [DB-OK] ✅ LLM Report saved to logbook.")
+
+        # GUI에 최신 logbook 데이터를 발행하여 갱신
+        publish_logbook_entries(client)
+
+    except Exception as e:
+        try:
+            DB_CONN.rollback()
+        except Exception:
+             pass
+        print(f"[{now}] [DB-ERROR] ❌ logbook 테이블 저장 실패 (LLM Report): {e}")
+
 # === DB 저장 함수 (DB_CONN, CURSOR 사용) ===
 def save_event_log(module: str, action: str, full_payload: str):
     """events 테이블에 일반 로그, STT, 모든 CRITICAL/WARNING 로그를 저장"""
     try:
+        global client
         ensure_db_connection()
 
         now = now_str()
@@ -345,6 +438,7 @@ def save_vision_data(module: str, action: str, payload_dict: dict):
 def save_imu_raw_data(payload_dict: dict):
     """imu_data 테이블에 연속적인 Pitch/Roll/Yaw 데이터를 저장"""
     try:
+        global client
         ensure_db_connection()
         
         now = now_str()
@@ -359,6 +453,17 @@ def save_imu_raw_data(payload_dict: dict):
         CURSOR.execute(sql, (now, pitch, roll, yaw)) 
         DB_CONN.commit()
         print(f"[{now}] [DB-OK] Raw data saved to imu_data: R:{roll:.2f} P:{pitch:.2f} Y:{yaw:.2f}")
+        
+        # Roll 해석: 좌현(Port: -) 또는 우현(Starboard: +)
+        roll_desc = f"{abs(roll):.2f}° " + ("(우현 기울임)" if roll >= 0 else "(좌현 기울임)")
+        
+        # Pitch 해석: 선수 들림(Up: +) 또는 선수 숙임(Down: -)
+        pitch_desc = f"{abs(pitch):.2f}° " + ("(선수 들림)" if pitch >= 0 else "(선수 숙임)")
+        
+        # Yaw 해석: 방위각을 나침반 방향으로 변환 (예: 45° -> 북동)
+        # ⚠️ (여기서는 간단히 각도만 표시하고, GUI에서 더 복잡한 변환을 수행할 수 있습니다.)
+        direction = get_compass_direction(yaw)
+        yaw_desc = f"{yaw:.2f}° ({direction})"
 
         # GUI 실시간 전송
         gui_payload = {
@@ -367,7 +472,10 @@ def save_imu_raw_data(payload_dict: dict):
             "action": "RAW",
             "roll": roll,
             "pitch": pitch,
-            "yaw": yaw
+            "yaw": yaw,
+            "roll_desc": roll_desc,
+            "pitch_desc": pitch_desc,
+            "yaw_desc": yaw_desc
         }
         client.publish(GUI_TOPIC_LOG, json.dumps(gui_payload, ensure_ascii=False))
 
@@ -796,7 +904,7 @@ def on_message(client, userdata, msg):
             
             # Summary 요청이 들어왔음을 이벤트 로그에 기록
             minutes_payload = payload.strip()
-            save_event_log("USER_STT", "SUMMARY_REQUEST", f"Request for summary (Payload: {minutes_payload})")
+            save_event_log("STT", "SUMMARY_REQUEST", f"Request for summary (Payload: {minutes_payload})")
 
             minutes = 15 # 기본값은 15분
             try:
@@ -813,6 +921,10 @@ def on_message(client, userdata, msg):
             
             summary = summarize_logs(logs, imu_stats, minutes) 
             text_to_speech(summary)
+            
+            # 이곳에 LLM 보고서 저장 함수를 추가합니다.
+            save_llm_report(summary)
+
             # LLM 결과 TTS 발화 후 DB에 기록
             save_event_log("LLM", "SAY", summary)
 
@@ -820,7 +932,7 @@ def on_message(client, userdata, msg):
              # 일반 쿼리는 LLM에 바로 질의 후 답변을 TTS로 발화합니다.
              print(f"[{now}] [CMD] Query request received → {payload}")
              # 사용자 쿼리를 이벤트 로그에 기록
-             save_event_log("USER_STT", "QUERY", payload)
+             save_event_log("STT", "QUERY", payload)
              
              # LLM 질의
              response = query_llm(payload)

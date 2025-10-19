@@ -741,10 +741,13 @@ def main():
             # 6. RAW 데이터 발행 (주기적으로)
             if frame_count % RAW_PUBLISH_INTERVAL == 0 and is_person_detected:
                 raw_payload = {
-                    "timestamp": now_str(), "module": FALL_MODULE, "level": "INFO",
-                    "detections": raw_detections_list, "person_detected": is_person_detected
+                    "timestamp": now_str(),
+                    "module": FALL_MODULE,
+                    "level": "INFO",
+                    "detections": raw_detections_list,
+                    "person_detected": is_person_detected
                 }
-                publish_mqtt_message(mqtt_client, RAW_TOPIC, raw_payload)
+                mqtt_client.publish(RAW_TOPIC, json.dumps(raw_payload, ensure_ascii=False), qos=0)
             
             fps_time = time.time()
             time.sleep(0.01)
