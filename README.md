@@ -18,10 +18,10 @@
 
 ## 3. 이상 감지 Anomaly Detection
 
-![04_AD.png](docs/resources/screenshot/04_AD.png)
-![05_AD.png](docs/resources/screenshot/05_AD.png)
-![02_AD_No_Dehazing.gif](docs/resources/video_gif/02_AD_No_Dehazing.gif)
-![03_AD_Dehazing.gif](docs/resources/video_gif/03_AD_Dehazing.gif)
+<img src="docs/resources/screenshot/04_AD.png" alt="04_AD.png" width="800"/>
+<img src="docs/resources/screenshot/05_AD.png" alt="05_AD.png" width="800"/>
+<img src="docs/resources/video_gif/02_AD_No_Dehazing.gif" alt="02_AD_No_Dehazing.gif" width="800"/>
+<img src="docs/resources/screenshot/03_AD_Dehazing.gif" alt="03_AD_Dehazing.gif" width="800"/>
 
 ## 4. 낙상 감지 Fall Detection
 
