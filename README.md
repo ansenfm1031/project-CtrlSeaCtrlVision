@@ -37,8 +37,8 @@
 
 <img src="docs/resources/screenshot/07_Server.png" alt="07_Server.png" width="800"/>
 <img src="docs/resources/screenshot/08_Server.png" alt="08_Server.png" width="800"/>
-<img src="docs/resources/video_gif/06_Server_SystemLog.gif" alt="06_Server_SystemLog.gif" height="600"/>
-<img src="docs/resources/video_gif/07_Server_Logbook.gif" alt="07_Server_Logbook.gif" height="600"/>
+<img src="docs/resources/video_gif/06_Server_SystemLog.gif" alt="06_Server_SystemLog.gif" height="480"/>
+<img src="docs/resources/video_gif/07_Server_Logbook.gif" alt="07_Server_Logbook.gif" height="480"/>
 
 ## 6. 팀원 소개
 | 이름 | 담당 |
