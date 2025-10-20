@@ -8,10 +8,10 @@ from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
     QSplitter, QGroupBox, QLabel, QTextEdit, 
     QGridLayout, QSizePolicy, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
-    QTabWidget
+    QTabWidget, QGraphicsEllipseItem, QGraphicsItem
 )
-from PyQt6.QtGui import QFont, QFontDatabase, QImage, QPixmap
-from PyQt6.QtCore import Qt, QObject, pyqtSignal, QSize
+from PyQt6.QtGui import QFont, QFontDatabase, QImage, QPixmap, QBrush, QPen, QColor, QPainter, QPolygonF
+from PyQt6.QtCore import Qt, QObject, pyqtSignal, QSize, QRectF, QPointF
 
 import paho.mqtt.client as mqtt
 
@@ -94,6 +94,151 @@ class MqttClient(QObject):
         except Exception as e:
             print(f"Connection error: {e}")
 
+# --- 롤(Roll) 시각화: 배의 뒷모습 ---
+class RollIndicator(QGraphicsItem):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.angle = 0.0
+        # 회전 중심을 아이템의 중심(0, 0)으로 설정
+        self.setTransformOriginPoint(0, 0) 
+
+    def boundingRect(self):
+        # 아이템이 차지하는 공간 (고정 크기)
+        return QRectF(-60, -60, 120, 120)
+
+    def paint(self, painter: QPainter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # 캔버스 중심: (0, 0)
+        center = QPointF(0, 0)
+        
+        # 1. 배경 (수평선)
+        painter.setPen(QPen(QColor(150, 150, 150), 1))
+        painter.drawLine(-60, 0, 60, 0) 
+        
+        # 2. 선박의 단면 (직사각형)
+        # 롤 각도에 따라 회전
+        self.setRotation(self.angle)
+        
+        painter.setBrush(QBrush(QColor(42, 157, 143, 200))) # 청록색 (배의 몸체)
+        painter.setPen(QPen(QColor(244, 162, 97), 2)) # 주황색 테두리
+        
+        # 선박 몸체: 너비 100, 높이 30
+        ship_rect = QRectF(-50, -15, 100, 30)
+        painter.drawRect(ship_rect)
+        
+        # 3. 중앙 기준점 표시 (선박 몸체가 회전하더라도 중심에 고정)
+        self.setRotation(0) # 기준점은 회전하지 않도록 리셋
+        painter.setBrush(QBrush(QColor(255, 0, 0)))
+        painter.drawEllipse(center, 3, 3)
+
+    def set_roll(self, roll_angle):
+        self.angle = roll_angle
+        self.update() # 화면 갱신 요청
+
+# --- 피치(Pitch) 시각화: 배의 옆모습 ---
+class PitchIndicator(QGraphicsItem):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.angle = 0.0
+        # 회전 중심을 아이템의 중심(0, 0)으로 설정
+        self.setTransformOriginPoint(0, 0) 
+
+    def boundingRect(self):
+        return QRectF(-60, -60, 120, 120)
+
+    def paint(self, painter: QPainter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        center = QPointF(0, 0)
+        
+        # 1. 배경 (수평선)
+        painter.setPen(QPen(QColor(150, 150, 150), 1))
+        painter.drawLine(-60, 0, 60, 0) 
+        
+        # 2. 선박의 옆모습 (삼각형과 직사각형 조합)
+        self.setRotation(self.angle)
+        
+        # 몸체
+        painter.setBrush(QBrush(QColor(233, 196, 106, 200))) # 황토색
+        painter.setPen(QPen(QColor(244, 162, 97), 2))
+        
+        # 직사각형 (선박 본체)
+        rect_body = QRectF(-50, -15, 100, 20)
+        painter.drawRect(rect_body)
+        
+        # 삼각형 (선박 선수)
+        bow_points = QPolygonF([
+            QPointF(50, -15), 
+            QPointF(60, -5), 
+            QPointF(50, 5)
+        ])
+        painter.drawPolygon(bow_points)
+        
+        # 3. 중앙 기준점 표시
+        self.setRotation(0)
+        painter.setBrush(QBrush(QColor(255, 0, 0)))
+        painter.drawEllipse(center, 3, 3)
+
+    def set_pitch(self, pitch_angle):
+        self.angle = pitch_angle
+        self.update()
+
+# --- 요(Yaw) 시각화: 나침반 ---
+class YawIndicator(QGraphicsItem):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.angle = 0.0
+        self.setTransformOriginPoint(0, 0)
+
+    def boundingRect(self):
+        return QRectF(-60, -60, 120, 120)
+
+    def paint(self, painter: QPainter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # 1. 배경 (나침반 원)
+        painter.setBrush(QBrush(QColor(30, 30, 30)))
+        painter.setPen(QPen(QColor(150, 150, 150), 2))
+        painter.drawEllipse(QRectF(-55, -55, 110, 110))
+
+        # 2. 나침반 눈금 및 방향 표시
+        painter.setPen(QPen(QColor(200, 200, 200), 1))
+        # N, E, S, W
+        painter.drawText(QPointF(-5, -50), "N") 
+        painter.drawText(QPointF(45, 5), "E")
+        painter.drawText(QPointF(-5, 55), "S")
+        painter.drawText(QPointF(-55, 5), "W")
+        
+        # 3. 방향 지시기 (Yaw에 따라 회전)
+        # Yaw는 보통 북쪽 기준 0~360도이므로, 시계 방향 회전을 위해 마이너스 값을 사용
+        self.setRotation(-self.angle) 
+
+        # 빨간색/흰색 바늘
+        needle_points = QPolygonF([
+            QPointF(-5, 0), QPointF(5, 0), QPointF(0, -50)
+        ])
+        
+        # 빨간색 (북쪽 방향)
+        painter.setBrush(QBrush(QColor(255, 0, 0)))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawPolygon(needle_points)
+        
+        # 흰색 (남쪽 방향)
+        white_points = QPolygonF([
+            QPointF(-5, 0), QPointF(5, 0), QPointF(0, 50)
+        ])
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        painter.drawPolygon(white_points)
+        
+        # 4. 중앙 나사
+        painter.setBrush(QBrush(QColor(100, 100, 100)))
+        painter.drawEllipse(QPointF(0, 0), 5, 5)
+
+    def set_yaw(self, yaw_angle):
+        self.angle = yaw_angle
+        self.update()
+
 # --- Main GUI ---
 class MarineDashboardApp(QWidget):
     def __init__(self):
@@ -103,6 +248,10 @@ class MarineDashboardApp(QWidget):
 
         self.imu_data = {'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0}
         self.imu_labels = {}
+
+        # IMU 시각화용 뷰/아이템 참조 저장 딕셔너리 추가
+        self.imu_views = {}
+        self.imu_items = {}
 
         # QGraphicsScene/PixmapItem 저장용
         self.ad_scene = None
@@ -197,35 +346,52 @@ class MarineDashboardApp(QWidget):
     # --- IMU UI ---
     def _setup_imu_display(self, grid):
         data_keys = [
-            ("좌우 기울어진 각도 (Roll)", "roll", "#2a9d8f"),
-            ("앞뒤 기울어진 각도 (Pitch)", "pitch", "#e9c46a"),
-            ("쳐다보는 방향 (Yaw)", "yaw", "#f4a261"),
+            ("좌우 기울어진 각도 (Roll)", "roll", RollIndicator, "#2a9d8f"),
+            ("앞뒤 기울어진 각도 (Pitch)", "pitch", PitchIndicator, "#e9c46a"),
+            ("쳐다보는 방향 (Yaw)", "yaw", YawIndicator, "#f4a261"),
         ]
 
         row_idx = 0
-        for col, (title, key, color) in enumerate(data_keys):
-            # 제목 레이블 (1행)
+        for col, (title, key, IndicatorClass, color) in enumerate(data_keys):
+            
+            # 0행: 제목 레이블
             t_label = QLabel(f"<b>{title}:</b>")
             grid.addWidget(t_label, 0, col*2, alignment=Qt.AlignmentFlag.AlignRight)
-            # 값 레이블 (1행)
-            v_label = QLabel("0.00")
-            v_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-            # 각도 값 옆에 도(°) 기호를 표시하기 위해 우측 패딩을 줄입니다.
-            v_label.setStyleSheet(f"color: {color}; padding: 5px 0px 5px 5px;") 
-            grid.addWidget(v_label, row_idx, col*2 + 1)
-            self.imu_labels[key] = v_label
             
-            # 설명 레이블 추가 (2행)
-            row_idx += 1
+            # 1행: 값 레이블 (숫자 표시)
+            v_label = QLabel("0.00°")
+            v_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+            v_label.setStyleSheet(f"color: {color}; padding: 5px 0px 5px 5px;") 
+            grid.addWidget(v_label, 0, col*2 + 1)
+            self.imu_labels[key] = v_label # 텍스트 값은 여기에 저장
+            
+            # 2행: 시각화 뷰 (QGraphicsView)
+            scene = QGraphicsScene()
+            # 💡 커스텀 아이템 생성 및 장면에 추가
+            indicator_item = IndicatorClass() 
+            scene.addItem(indicator_item)
+            
+            view = QGraphicsView(scene)
+            view.setFixedSize(130, 130) # 시각화 영역 크기 고정
+            view.setSceneRect(indicator_item.boundingRect()) # 아이템 크기에 맞춰 장면 설정
+            view.fitInView(indicator_item, Qt.AspectRatioMode.KeepAspectRatio) # 뷰에 맞춤
+            view.setStyleSheet(f"border: 2px solid {color}; background-color: #0d1117;")
+            
+            # 뷰와 아이템을 딕셔너리에 저장하여 외부에서 접근 가능하도록 함
+            self.imu_views[key] = view
+            self.imu_items[key] = indicator_item
+            
+            # 2행: 시각화 뷰를 그리드에 추가 (총 2칸 차지)
+            grid.addWidget(view, 1, col*2, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter) 
+            
+            # 3행: 설명 레이블
             desc_label = QLabel("데이터 없음")
             desc_label.setFont(QFont("Arial", 10))
-            # 스타일을 좀 더 잘 보이게 조정했습니다.
             desc_label.setStyleSheet(f"color: {color}; font-style: italic; padding: 2px; border: 1px solid {color}; border-radius: 3px;") 
-            # 가로로 2칸을 모두 차지하도록 통합합니다.
-            grid.addWidget(desc_label, row_idx, col*2, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter) 
-            self.imu_labels[f'{key}_desc'] = desc_label # 'roll_desc' 등을 저장
+            grid.addWidget(desc_label, 2, col*2, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter) 
+            self.imu_labels[f'{key}_desc'] = desc_label 
             
-            row_idx -= 1 # 다음 센서는 다시 1행으로 돌아가도록 (2칸을 사용하여 총 2줄)
+            grid.setRowStretch(1, 1) # 시각화 뷰 행에 공간 할당
 
     # --- MQTT 설정 ---
     def setup_mqtt(self):
@@ -312,6 +478,17 @@ class MarineDashboardApp(QWidget):
                 try:
                     val = float(str(data[key]))
                     self.imu_labels[key].setText(f"{val:.2f}°")
+
+                    # 시각화 아이템 업데이트
+                    if key in self.imu_items:
+                        item = self.imu_items[key]
+                        if key == 'roll':
+                            item.set_roll(val)
+                        elif key == 'pitch':
+                            item.set_pitch(val)
+                        elif key == 'yaw':
+                            item.set_yaw(val)
+
                 except Exception as e:
                     print(f"[IMU Error] {key}: {e}")
                     self.imu_labels[key].setText("ERR")
