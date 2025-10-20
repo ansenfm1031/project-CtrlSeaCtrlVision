@@ -25,9 +25,9 @@
 
 ## 4. 낙상 감지 Fall Detection
 
-![06_PE.png](docs/resources/screenshot/06_PE.png)
-![04_PE1.gif](docs/resources/video_gif/04_PE1.gif)
-![05_PE2.gif](docs/resources/video_gif/05_PE2.gif)
+<img src="docs/resources/screenshot/06_PE.png" alt="06_PE.png" width="800"/>
+<img src="docs/resources/video_gif/04_PE1.gif" alt="04_PE1.gif" width="800"/>
+<img src="docs/resources/video_gif/05_PE2.gif" alt="05_PE2.gif" width="800"/>
 
 ## 5. 상황실 Ctrl Room
 
@@ -35,10 +35,10 @@
 - **MQTT** : Publish–Subscribe 기반 메시지 프로토콜  
   - 간결하고 유연한 구조
 
-![07_Server.png](docs/resources/screenshot/07_Server.png)
-![08_Server.png](docs/resources/screenshot/08_Server.png)
-![06_Server_SystemLog.gif](docs/resources/video_gif/06_Server_SystemLog.gif)
-![07_Server_Logbook.gif](docs/resources/video_gif/07_Server_Logbook.gif)
+<img src="docs/resources/screenshot/07_Server.png" alt="07_Server.png" width="800"/>
+<img src="docs/resources/screenshot/08_Server.png" alt="08_Server.png" width="800"/>
+<img src="docs/resources/video_gif/06_Server_SystemLog.gif" alt="06_Server_SystemLog.gif" height="600"/>
+<img src="docs/resources/video_gif/07_Server_Logbook.gif" alt="07_Server_Logbook.gif" height="600"/>
 
 ## 6. 팀원 소개
 | 이름 | 담당 |
