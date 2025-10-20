@@ -12,15 +12,33 @@
 ### 🧩 개념
 이미지 향상(Image Enhancement) 및 복원(Image Restoration)을 통한 시야 확보.
 
+![01_Dehazing.png](docs/resources/screenshot/01_Dehazing.png)
+![02_Dehazing.png](docs/resources/screenshot/02_Dehazing.png)
+![03_Dehazing.png](docs/resources/screenshot/03_Dehazing.png)
+
 ## 3. 이상 감지 Anomaly Detection
 
+![04_AD.png](docs/resources/screenshot/04_AD.png)
+![05_AD.png](docs/resources/screenshot/05_AD.png)
+![02_AD_No_Dehazing.gif](docs/resources/video_gif/02_AD_No_Dehazing.gif)
+![03_AD_Dehazing.gif](docs/resources/video_gif/03_AD_Dehazing.gif)
+
 ## 4. 낙상 감지 Fall Detection
+
+![06_PE.png](docs/resources/screenshot/06_PE.png)
+![04_PE1.gif](docs/resources/video_gif/04_PE1.gif)
+![05_PE2.gif](docs/resources/video_gif/05_PE2.gif)
 
 ## 5. 상황실 Ctrl Room
 
 ### 🛰 MQTT 통신 구조
 - **MQTT** : Publish–Subscribe 기반 메시지 프로토콜  
   - 간결하고 유연한 구조
+
+![07_Server.png](docs/resources/screenshot/07_Server.png)
+![08_Server.png](docs/resources/screenshot/08_Server.png)
+![06_Server_SystemLog.gif](docs/resources/video_gif/06_Server_SystemLog.gif)
+![07_Server_Logbook.gif](docs/resources/video_gif/07_Server_Logbook.gif)
 
 ## 6. 팀원 소개
 | 이름 | 담당 |
