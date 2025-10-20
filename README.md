@@ -12,9 +12,13 @@
 ### 🧩 개념
 이미지 향상(Image Enhancement) 및 복원(Image Restoration)을 통한 시야 확보.
 
-<img src="docs/resources/screenshot/01_Dehazing.png" alt="01_Dehazing.png" width="800"/>
-<img src="docs/resources/screenshot/02_Dehazing.png" alt="02_Dehazing.png" width="800"/>
-<img src="docs/resources/screenshot/03_Dehazing.png" alt="03_Dehazing.png" width="800"/>
+<details open>
+  <summary>
+    <img src="docs/resources/screenshot/01_Dehazing.png" alt="01_Dehazing.png" width="800"/>
+    <img src="docs/resources/screenshot/02_Dehazing.png" alt="02_Dehazing.png" width="800"/>
+    <img src="docs/resources/screenshot/03_Dehazing.png" alt="03_Dehazing.png" width="800"/>
+  </summary>
+</details>
 
 ## 3. 이상 감지 Anomaly Detection
 
