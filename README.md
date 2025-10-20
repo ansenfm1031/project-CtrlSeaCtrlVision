@@ -14,7 +14,7 @@
 
 <img src="docs/resources/screenshot/01_Dehazing.png" alt="01_Dehazing.png" width="800"/>
 <img src="docs/resources/screenshot/02_Dehazing.png" alt="02_Dehazing.png" width="800"/>
-<img src="docs/resources/screenshot/02_Dehazing.png" alt="02_Dehazing.png" width="800"/>
+<img src="docs/resources/screenshot/03_Dehazing.png" alt="03_Dehazing.png" width="800"/>
 
 ## 3. 이상 감지 Anomaly Detection
 
