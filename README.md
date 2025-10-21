@@ -9,7 +9,8 @@
 - **자동 항해 일지 작성 및 브리핑**
 
 **개발 기간**: 2025.09.26 ~ 2025.10.22  
-**개발 환경**: Jetson Nano / Raspberry Pi 5 / Python / MQTT
+**개발 환경**: Jetson Nano / Raspberry Pi 5 / Python / MQTT  
+**발표 자료 다운로드**: [[Ctrl + Click Here]](https://drive.google.com/drive/folders/1VzminDn5eenhiwE3JjTkIos7xjNJQT3j?usp=sharing)
 
 ## 2. 안개 제거 Dehazing
 
@@ -21,6 +22,7 @@
 
 ## 3. 이상 감지 Anomaly Detection
 
+### 🛰 이상 감지 학습 방식
 <img src="docs/resources/screenshot/04_AD.png" alt="04_AD.png" width="800"/>
 <img src="docs/resources/screenshot/05_AD.png" alt="05_AD.png" width="800"/>
 <img src="docs/resources/video_gif/02_AD_No_Dehazing.gif" alt="02_AD_No_Dehazing.gif" width="800"/>
@@ -29,14 +31,16 @@
 ## 4. 낙상 감지 Fall Detection
 
 <img src="docs/resources/screenshot/06_PE.png" alt="06_PE.png" width="800"/>
+<img src="https://github.com/user-attachments/assets/ac1ceadf-53a7-4eb9-8f55-9cbd8d159dfe" width="800"/>  
+<img src="https://github.com/user-attachments/assets/58486cd9-d9b5-46f6-bcaf-c36f92431969" width="800"/>  
 <img src="docs/resources/video_gif/04_PE1.gif" alt="04_PE1.gif" width="800"/>
 <img src="docs/resources/video_gif/05_PE2.gif" alt="05_PE2.gif" width="800"/>
+ 
+
 
 ## 5. 상황실 Ctrl Room
 
 ### 🛰 MQTT 통신 구조
-- **MQTT** : Publish–Subscribe 기반 메시지 프로토콜  
-  - 간결하고 유연한 구조
 
 <img src="docs/resources/screenshot/07_Server.png" alt="07_Server.png" width="800"/>
 <img src="docs/resources/screenshot/08_Server.png" alt="08_Server.png" width="800"/>
