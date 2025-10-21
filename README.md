@@ -36,8 +36,6 @@
 ## 5. 상황실 Ctrl Room
 
 ### 🛰 MQTT 통신 구조
-- **MQTT** : Publish–Subscribe 기반 메시지 프로토콜  
-  - 간결하고 유연한 구조
 
 <img src="docs/resources/screenshot/07_Server.png" alt="07_Server.png" width="800"/>
 <img src="docs/resources/screenshot/08_Server.png" alt="08_Server.png" width="800"/>
