@@ -31,9 +31,11 @@
 ## 4. 낙상 감지 Fall Detection
 
 <img src="docs/resources/screenshot/06_PE.png" alt="06_PE.png" width="800"/>
+<img src="https://github.com/user-attachments/assets/ac1ceadf-53a7-4eb9-8f55-9cbd8d159dfe" width="800"/>  
+<img src="https://github.com/user-attachments/assets/58486cd9-d9b5-46f6-bcaf-c36f92431969" width="800"/>  
 <img src="docs/resources/video_gif/04_PE1.gif" alt="04_PE1.gif" width="800"/>
 <img src="docs/resources/video_gif/05_PE2.gif" alt="05_PE2.gif" width="800"/>
-<img src="https://github.com/user-attachments/assets/ac1ceadf-53a7-4eb9-8f55-9cbd8d159dfe" width="800"/>  
+ 
 
 
 ## 5. 상황실 Ctrl Room
