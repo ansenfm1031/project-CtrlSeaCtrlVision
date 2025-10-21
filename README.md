@@ -22,6 +22,7 @@
 
 ## 3. 이상 감지 Anomaly Detection
 
+### 🛰 이상 감지 학습 방식
 <img src="docs/resources/screenshot/04_AD.png" alt="04_AD.png" width="800"/>
 <img src="docs/resources/screenshot/05_AD.png" alt="05_AD.png" width="800"/>
 <img src="docs/resources/video_gif/02_AD_No_Dehazing.gif" alt="02_AD_No_Dehazing.gif" width="800"/>
