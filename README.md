@@ -10,7 +10,7 @@
 - **자동 항해 일지 작성 및 브리핑**
 
 ### 전체 시스템 구상도
-<img width="800" alt="image" src="https://github.com/user-attachments/assets/8f1ac869-94ec-48f1-ad76-5a102c153707" />
+<img width="800" alt="image" src="docs/resources/screenshot/01_Architecture.png" />
 
 **개발 기간**: 2025.09.26 ~ 2025.10.22  
 **개발 환경**: Jetson Nano / Raspberry Pi 5 / Python / MQTT  
@@ -20,23 +20,23 @@
 
 > ### **이미지 향상(Image Enhancement) 및 복원(Image Restoration)을 통한 시야 확보**
 
-<img src="docs/resources/screenshot/01_Dehazing.png" alt="01_Dehazing.png" width="800"/>
-<img src="docs/resources/screenshot/02_Dehazing.png" alt="02_Dehazing.png" width="800"/>
-<img src="docs/resources/screenshot/03_Dehazing.png" alt="03_Dehazing.png" width="800"/>
+<img src="docs/resources/screenshot/02_Dehazing.png" alt="01_Dehazing.png" width="800"/>
+<img src="docs/resources/screenshot/03_Dehazing.png" alt="02_Dehazing.png" width="800"/>
+<img src="docs/resources/screenshot/04_Dehazing.png" alt="03_Dehazing.png" width="800"/>
 
 ## 3. 이상 감지 Anomaly Detection
 
 ### 🛰 이상 감지 학습 방식
-<img src="docs/resources/screenshot/04_AD.png" alt="04_AD.png" width="800"/>
-<img src="docs/resources/screenshot/05_AD.png" alt="05_AD.png" width="800"/>
+<img src="docs/resources/screenshot/05_AD.png" alt="04_AD.png" width="800"/>
+<img src="docs/resources/screenshot/06_AD.png" alt="05_AD.png" width="800"/>
 <img src="docs/resources/video_gif/02_AD_No_Dehazing.gif" alt="02_AD_No_Dehazing.gif" width="800"/>
 <img src="docs/resources/video_gif/03_AD_Dehazing.gif" alt="03_AD_Dehazing.gif" width="800"/>
 
 ## 4. 낙상 감지 Fall Detection
 
-<img src="docs/resources/screenshot/06_PE.png" alt="06_PE.png" width="800"/>
-<img src="https://github.com/user-attachments/assets/ac1ceadf-53a7-4eb9-8f55-9cbd8d159dfe" width="800"/>  
-<img src="https://github.com/user-attachments/assets/58486cd9-d9b5-46f6-bcaf-c36f92431969" width="800"/>  
+<img src="docs/resources/screenshot/07_PE.png" alt="06_PE.png" width="800"/>
+<img src="docs/resources/screenshot/08_PE.jpeg" width="800"/>  
+<img src="docs/resources/screenshot/09_PE.png" width="800"/>  
 <img src="docs/resources/video_gif/04_PE1.gif" alt="04_PE1.gif" width="800"/>
 <img src="docs/resources/video_gif/05_PE2.gif" alt="05_PE2.gif" width="800"/>
  
@@ -46,8 +46,8 @@
 
 ### 🛰 MQTT 통신 구조
 
-<img src="docs/resources/screenshot/07_Server.png" alt="07_Server.png" width="800"/>
-<img src="docs/resources/screenshot/08_Server.png" alt="08_Server.png" width="800"/>
+<img src="docs/resources/screenshot/10_Server.png" alt="07_Server.png" width="800"/>
+<img src="docs/resources/screenshot/11_Server.png" alt="08_Server.png" width="800"/>
 <img src="docs/resources/video_gif/06_Server_SystemLog.gif" alt="06_Server_SystemLog.gif" height="480"/>
 <img src="docs/resources/video_gif/07_Server_Logbook.gif" alt="07_Server_Logbook.gif" height="480"/>
 
